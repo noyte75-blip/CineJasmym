@@ -10,12 +10,17 @@ const CONFIG = {
   // WS_URL: 'wss://encontro-jasmym-e-livia-backend-uq81.onrender.com',
 
   // O servidor é o relógio oficial. O cliente apenas consulta este estado.
-  // Menos de 180 ms é imperceptível. Diferenças médias são corrigidas pela
+  // Menos de 220 ms é praticamente imperceptível. Diferenças médias são corrigidas pela
   // velocidade; seek fica reservado para desvios reais para não recarregar.
-  SYNC_DEAD_BAND: 0.18,
-  SYNC_RATE_THRESHOLD: 0.30,
-  SYNC_HARD_THRESHOLD: 0.90,
-  SYNC_CHECK_INTERVAL_MS: 500,
-  STATE_POLL_INTERVAL_MS: 3000,
-  TIME_SYNC_INTERVAL_MS: 10000,
+  SYNC_DEAD_BAND: 0.22,
+  SYNC_RATE_THRESHOLD: 0.45,
+  SYNC_HARD_THRESHOLD: 1.0,
+  SYNC_RATE_ADJUSTMENT: 0.03,
+  SYNC_CHECK_INTERVAL_MS: 650,
+  PAUSED_SYNC_INTERVAL_MS: 2500,
+  BACKGROUND_SYNC_INTERVAL_MS: 5000,
+  PLAYING_STATE_POLL_INTERVAL_MS: 12000,
+  PAUSED_STATE_POLL_INTERVAL_MS: 30000,
+  BACKGROUND_STATE_POLL_INTERVAL_MS: 30000,
+  TIME_SYNC_INTERVAL_MS: 30000,
 };

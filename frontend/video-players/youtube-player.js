@@ -148,12 +148,11 @@ class YoutubePlayer extends PlayerInterface {
   setPlaybackRate(rate) {
     if (!this._ready || !this.player?.setPlaybackRate) return false;
     const available = this.player.getAvailablePlaybackRates?.() || [1];
-    let target = 1;
-    if (rate > 1.001) {
-      target = available.filter((value) => value > 1).sort((a, b) => a - b)[0] || 1;
-    } else if (rate < 0.999) {
-      target = available.filter((value) => value < 1).sort((a, b) => b - a)[0] || 1;
-    }
+    const target = available.find((value) => Math.abs(value - rate) < 0.01);
+    // O YouTube normalmente oferece degraus grandes (0.75/1.25). Usá-los para
+    // corrigir poucos milissegundos deixaria o vídeo claramente lento/rápido.
+    // Sem uma taxa fina disponível, aguardamos o limite de correção por seek.
+    if (!Number.isFinite(target)) return false;
     this.player.setPlaybackRate(target);
     return true;
   }

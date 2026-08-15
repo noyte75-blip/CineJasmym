@@ -61,9 +61,16 @@ class WebSocketClient {
     (this._listeners[type] || []).forEach((cb) => cb(data));
   }
 
-  send(data) {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+  send(data, { skipIfBusy = false } = {}) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
+    // Snapshots e PINGs são descartáveis: se uma imagem já estiver na fila,
+    // não colocamos consultas antigas na frente do próximo comando do usuário.
+    if (skipIfBusy && this.ws.bufferedAmount > 64 * 1024) return false;
+    try {
       this.ws.send(JSON.stringify(data));
+      return true;
+    } catch {
+      return false;
     }
   }
 }

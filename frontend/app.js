@@ -73,7 +73,7 @@ const state = {
 
 const SESSION_STORAGE_KEY = 'encontro-jasmym-sessions-v1';
 const PROFILE_STORAGE_KEY = 'encontro-jasmym-profile-v1';
-const PROTOCOL_VERSION = 12;
+const PROTOCOL_VERSION = 13;
 
 function readJson(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key)) ?? fallback; }
@@ -164,15 +164,15 @@ async function prepareImage(file, purpose) {
   if (file.size > 8 * 1024 * 1024) throw new Error('A imagem original deve ter no máximo 8 MB.');
 
   if (file.type === 'image/gif') {
-    const maxGif = purpose === 'avatar' ? 120 * 1024 : 650 * 1024;
-    if (file.size > maxGif) throw new Error(`O GIF deve ter no máximo ${purpose === 'avatar' ? '120 KB' : '650 KB'}.`);
+    const maxGif = purpose === 'avatar' ? 100 * 1024 : 350 * 1024;
+    if (file.size > maxGif) throw new Error(`O GIF deve ter no máximo ${purpose === 'avatar' ? '100 KB' : '350 KB'}.`);
     return fileToDataUrl(file);
   }
 
   const dataUrl = await compressStillImage(file, purpose === 'avatar'
-    ? { maxSide: 180, quality: 0.82 }
-    : { maxSide: 1200, quality: 0.82 });
-  const limit = purpose === 'avatar' ? 175_000 : 900_000;
+    ? { maxSide: 160, quality: 0.78 }
+    : { maxSide: 900, quality: 0.74 });
+  const limit = purpose === 'avatar' ? 130_000 : 520_000;
   if (dataUrl.length > limit) throw new Error('A imagem ficou grande demais mesmo após a redução.');
   return dataUrl;
 }
@@ -281,7 +281,7 @@ function attachRoomListeners(client) {
     inviteUrl.searchParams.set('sala', state.roomCode);
     history.replaceState({}, '', inviteUrl);
     handleRoomState(message, true);
-    client.send({ type: 'REQUEST_STATE' });
+    client.send({ type: 'REQUEST_STATE' }, { skipIfBusy: true });
   };
 
   client.on('ROOM_CREATED', entered);
@@ -311,7 +311,11 @@ function attachRoomListeners(client) {
   });
   client.on('CHAT_MESSAGE', (message) => {
     if (!activeClient()) return;
-    addChatMessage(message.from, message.text, false, { media: message.media, avatar: message.avatar });
+    const sender = state.participants.find((person) => person.id === message.participantId);
+    addChatMessage(message.from, message.text, false, {
+      media: message.media,
+      avatar: message.avatar || sender?.avatar || null,
+    });
   });
   client.on('ROOM_FULL', ({ message }) => {
     if (!activeClient()) return;
@@ -524,8 +528,8 @@ function formatTime(seconds) {
 }
 
 function startProgressLoop() {
-  clearInterval(state.progressTimer);
-  state.progressTimer = setInterval(() => {
+  clearTimeout(state.progressTimer);
+  const updateProgress = () => {
     if (!state.player) return;
     const actual = state.player.getCurrentTime();
     const current = state.sync?.expectsPlayback() && !state.player.isPlaying()
@@ -538,7 +542,9 @@ function startProgressLoop() {
     }
     els.timeDisplay.textContent = `${formatTime(current)} / ${formatTime(duration)}`;
     updatePlayPauseIcon();
-  }, 400);
+    state.progressTimer = setTimeout(updateProgress, document.hidden ? 2000 : 400);
+  };
+  updateProgress();
 }
 
 els.btnCopyLink.addEventListener('click', async () => {
@@ -626,7 +632,8 @@ els.chatForm.addEventListener('submit', (event) => {
   const text = els.chatInput.value.trim();
   const media = state.pendingMedia;
   if (!text && !media) return;
-  state.wsClient?.send({ type: 'CHAT_MESSAGE', text, media });
+  const sent = state.wsClient?.send({ type: 'CHAT_MESSAGE', text, media });
+  if (!sent) return showChatError('A conexão caiu antes de enviar. Tente novamente.');
   addChatMessage(state.myName, text, true, { media, avatar: state.avatar });
   els.chatInput.value = '';
   clearPendingMedia();
@@ -670,7 +677,10 @@ els.btnCloseChat.addEventListener('click', () => els.chatPanel.classList.remove(
 
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && state.roomCode) {
-    if (state.wsClient?.isOpen()) state.wsClient.send({ type: 'REQUEST_STATE' });
+    if (state.wsClient?.isOpen()) {
+      state.wsClient.send({ type: 'REQUEST_STATE' }, { skipIfBusy: true });
+      state.sync?.requestTimeSync();
+    }
     else scheduleReconnect();
   }
 });

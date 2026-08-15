@@ -18,13 +18,14 @@
   [headers.values]
     Cache-Control = "no-store"
 
-# Revalida scripts e estilos para não misturar versões do protocolo.
+# Os arquivos usam ?v=13. Uma nova versão cria outra URL, então o navegador
+# pode guardar JS/CSS por bastante tempo sem misturar protocolos.
 [[headers]]
   for = "/*.js"
   [headers.values]
-    Cache-Control = "public, max-age=0, must-revalidate"
+    Cache-Control = "public, max-age=31536000, immutable"
 
 [[headers]]
   for = "/*.css"
   [headers.values]
-    Cache-Control = "public, max-age=0, must-revalidate"
+    Cache-Control = "public, max-age=31536000, immutable"

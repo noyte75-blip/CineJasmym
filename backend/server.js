@@ -11,7 +11,7 @@ const ALLOWED_ORIGINS = new Set(
   (process.env.ALLOWED_ORIGINS || '').split(',').map((value) => value.trim()).filter(Boolean),
 );
 
-const PROTOCOL_VERSION = 12;
+const PROTOCOL_VERSION = 13;
 // Pequeno tempo para os dois navegadores receberem o PLAY antes de o relógio
 // começar a avançar. Isso reduz a diferença inicial sem transmitir o vídeo.
 const PLAY_START_DELAY_MS = 700;
@@ -19,8 +19,8 @@ const ROOM_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const NAME_MAX_LENGTH = 30;
 const CHAT_MAX_LENGTH = 600;
 const VIDEO_URL_MAX_LENGTH = 2048;
-const AVATAR_MAX_CHARS = 180_000;
-const MEDIA_MAX_CHARS = 950_000;
+const AVATAR_MAX_CHARS = 140_000;
+const MEDIA_MAX_CHARS = 560_000;
 const CONTROL_TYPES = new Set(['PLAY', 'PAUSE', 'SEEK', 'CHANGE_VIDEO']);
 const IMAGE_DATA_URL = /^data:image\/(?:jpeg|png|webp|gif);base64,[a-zA-Z0-9+/=]+$/;
 
@@ -172,6 +172,14 @@ function broadcastRoomState(room, includeParticipants = false) {
   }
 }
 
+function rememberCommand(room, commandId) {
+  if (!commandId) return;
+  room.recentCommands.set(commandId, room.videoState.revision);
+  if (room.recentCommands.size > 100) {
+    room.recentCommands.delete(room.recentCommands.keys().next().value);
+  }
+}
+
 function allowMessage(ws, bytes) {
   const now = Date.now();
   let limit = rateLimits.get(ws);
@@ -216,6 +224,7 @@ function handleCreateRoom(ws, msg) {
     code: roomCode,
     participants: new Map([[participant.id, participant]]),
     leaderId: null,
+    recentCommands: new Map(),
     videoState: {
       videoType: null,
       url: null,
@@ -273,7 +282,6 @@ function handleJoinRoom(ws, msg) {
     participants: publicParticipants(room),
     leader: leaderInfo(room),
   }, ws);
-  broadcastRoomState(room, true);
 }
 
 function commitVideoCommand(room, msg) {
@@ -300,8 +308,12 @@ function commitVideoCommand(room, msg) {
   } else if (msg.type === 'SEEK') {
     const position = normalizeTime(msg.position ?? msg.time);
     if (position === null) return false;
+    const scheduledPlay = room.videoState.playing && room.videoState.changedAt > now;
     room.videoState.position = position;
-    if (typeof msg.playing === 'boolean') room.videoState.playing = msg.playing;
+    // SEEK altera apenas a posição. Um snapshot antigo do cliente nunca pode
+    // mudar play/pause por acidente.
+    room.videoState.playing = current.playing;
+    if (scheduledPlay) changedAt = room.videoState.changedAt;
   } else {
     return false;
   }
@@ -345,26 +357,37 @@ function handleRoomMessage(ws, msg) {
       text,
       media,
       from: participant.name,
-      avatar: participant.avatar,
       participantId: participant.id,
       sentAt: Date.now(),
     }, ws);
   }
 
   if (!CONTROL_TYPES.has(msg.type)) return;
+  const commandId = cleanText(msg.commandId || msg.actionId, 160) || null;
+  if (commandId && room.recentCommands.has(commandId)) {
+    const snapshot = projectedVideoState(room);
+    return send(ws, {
+      type: 'COMMAND_ACK',
+      commandId,
+      duplicate: true,
+      revision: snapshot.revision,
+      videoState: snapshot,
+    });
+  }
   if (!commitVideoCommand(room, msg)) return fail(ws, 'INVALID_ACTION', 'A ação de vídeo é inválida.');
 
   const snapshot = projectedVideoState(room);
+  rememberCommand(room, commandId);
   send(ws, {
     type: 'COMMAND_ACK',
-    commandId: cleanText(msg.commandId || msg.actionId, 160) || null,
+    commandId,
     revision: snapshot.revision,
     videoState: snapshot,
   });
+  // Uma mensagem autoritativa para cada cliente é suficiente. Antes, o peer
+  // recebia o evento legado e outro ROOM_STATE com a mesma mudança.
   broadcast(room, {
-    type: msg.type,
-    from: participant.name,
-    participantId: participant.id,
+    type: 'ROOM_STATE',
     videoState: snapshot,
     videoType: snapshot.videoType,
     url: snapshot.url,
@@ -374,7 +397,6 @@ function handleRoomMessage(ws, msg) {
     serverNow: snapshot.serverNow,
     revision: snapshot.revision,
   }, ws);
-  broadcastRoomState(room);
 }
 
 function leaveRoom(ws) {
@@ -394,7 +416,6 @@ function leaveRoom(ws) {
     participants: publicParticipants(room),
     leader: leaderInfo(room),
   });
-  broadcastRoomState(room, true);
 }
 
 const server = http.createServer((req, res) => {

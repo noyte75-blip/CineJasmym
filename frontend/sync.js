@@ -1,4 +1,6 @@
-// Sincronização v12: servidor autoritativo + relógio compensado por latência.
+// Sincronização v13: servidor autoritativo + relógio monotônico + ciclos
+// adaptativos. Quando o vídeo está pausado ou a aba está oculta, o trabalho e
+// as mensagens diminuem automaticamente.
 //
 // O vídeo continua sendo carregado diretamente da fonte. Pelo WebSocket passam
 // apenas snapshots pequenos, comandos e amostras de horário. PLAY/PAUSE nunca
@@ -25,6 +27,7 @@ class SyncController {
     this.bestRttMs = Infinity;
     this.lastHardCorrectionAt = 0;
     this.playbackRate = 1;
+    this.clockBurstCount = 0;
     this.sessionId = globalThis.crypto?.randomUUID?.()
       || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   }
@@ -38,7 +41,7 @@ class SyncController {
     this.wsClient.send({
       type,
       ...fields,
-      protocolVersion: 12,
+      protocolVersion: 13,
       intent: 'user-control',
       commandId: this._commandId(),
     });
@@ -47,16 +50,32 @@ class SyncController {
   replaceConnection(wsClient) {
     this.wsClient = wsClient;
     this.requestTimeSync();
-    this.wsClient.send({ type: 'REQUEST_STATE' });
+    this.wsClient.send({ type: 'REQUEST_STATE' }, { skipIfBusy: true });
+  }
+
+  _now() {
+    if (globalThis.performance
+      && Number.isFinite(globalThis.performance.timeOrigin)
+      && typeof globalThis.performance.now === 'function') {
+      return globalThis.performance.timeOrigin + globalThis.performance.now();
+    }
+    return Date.now();
+  }
+
+  _isHidden() {
+    return typeof document !== 'undefined' && document.hidden;
   }
 
   requestTimeSync() {
     if (this.destroyed) return;
-    this.wsClient.send({ type: 'PING', clientTime: Date.now() });
+    this.wsClient.send(
+      { type: 'PING', clientTime: this._now() },
+      { skipIfBusy: true },
+    );
   }
 
   updateClockSample({ clientTime, serverNow }) {
-    const received = Date.now();
+    const received = this._now();
     const sent = Number(clientTime);
     const server = Number(serverNow);
     const rtt = received - sent;
@@ -74,7 +93,7 @@ class SyncController {
   }
 
   estimatedServerNow() {
-    return Number.isFinite(this.clockOffsetMs) ? Date.now() + this.clockOffsetMs : null;
+    return Number.isFinite(this.clockOffsetMs) ? this._now() + this.clockOffsetMs : null;
   }
 
   expectedPosition() {
@@ -93,7 +112,7 @@ class SyncController {
         : snapshotServerNow;
       position += Math.max(0, estimatedNow - countingFrom) / 1000;
     } else {
-      position += Math.max(0, Date.now() - this.receivedAt) / 1000;
+      position += Math.max(0, this._now() - this.receivedAt) / 1000;
     }
     return Math.max(0, position);
   }
@@ -121,7 +140,7 @@ class SyncController {
       && (revision < this.latestRevision || sameOrOlderSnapshot)) return;
     if (Number.isFinite(revision)) this.latestRevision = revision;
 
-    const receivedAt = Date.now();
+    const receivedAt = this._now();
     // Antes do primeiro PONG, esta aproximação já elimina a diferença entre
     // relógios configurados incorretamente nos dois aparelhos.
     if (!Number.isFinite(this.clockOffsetMs) && Number.isFinite(serverNow)) {
@@ -213,7 +232,7 @@ class SyncController {
       return;
     }
 
-    const now = Date.now();
+    const now = this._now();
     if (drift > CONFIG.SYNC_HARD_THRESHOLD && now - this.lastHardCorrectionAt > 1500) {
       // Um seek único é melhor que vários pequenos: corrige rápido e evita que
       // o YouTube fique reiniciando o buffer.
@@ -221,7 +240,8 @@ class SyncController {
       this.player.seekTo(target);
       this.lastHardCorrectionAt = now;
     } else if (drift > CONFIG.SYNC_RATE_THRESHOLD) {
-      this._setPlaybackRate(signedDrift > 0 ? 1.05 : 0.95);
+      const adjustment = CONFIG.SYNC_RATE_ADJUSTMENT;
+      this._setPlaybackRate(signedDrift > 0 ? 1 + adjustment : 1 - adjustment);
     } else {
       this._resetPlaybackRate();
     }
@@ -258,7 +278,6 @@ class SyncController {
     this.player.seekTo(safePosition);
     this._send('SEEK', {
       position: safePosition,
-      playing: this.expectsPlayback(),
     });
   }
 
@@ -266,28 +285,61 @@ class SyncController {
     this._send('CHANGE_VIDEO', { videoType, url });
   }
 
+  _scheduleReconcile(delay = null) {
+    clearTimeout(this.syncTimer);
+    if (this.destroyed) return;
+    const nextDelay = delay ?? (this._isHidden()
+      ? CONFIG.BACKGROUND_SYNC_INTERVAL_MS
+      : this.expectsPlayback()
+        ? CONFIG.SYNC_CHECK_INTERVAL_MS
+        : CONFIG.PAUSED_SYNC_INTERVAL_MS);
+    this.syncTimer = setTimeout(() => {
+      this._reconcile();
+      this._scheduleReconcile();
+    }, nextDelay);
+  }
+
+  _scheduleStatePoll(delay = null) {
+    clearTimeout(this.pollTimer);
+    if (this.destroyed) return;
+    const nextDelay = delay ?? (this._isHidden()
+      ? CONFIG.BACKGROUND_STATE_POLL_INTERVAL_MS
+      : this.expectsPlayback()
+        ? CONFIG.PLAYING_STATE_POLL_INTERVAL_MS
+        : CONFIG.PAUSED_STATE_POLL_INTERVAL_MS);
+    this.pollTimer = setTimeout(() => {
+      this.wsClient.send({ type: 'REQUEST_STATE' }, { skipIfBusy: true });
+      this._scheduleStatePoll();
+    }, nextDelay);
+  }
+
+  _scheduleTimeSync(delay = null) {
+    clearTimeout(this.timeSyncTimer);
+    if (this.destroyed) return;
+    const initialDelays = [0, 500, 1500];
+    const nextDelay = delay ?? (this.clockBurstCount < initialDelays.length
+      ? initialDelays[this.clockBurstCount]
+      : CONFIG.TIME_SYNC_INTERVAL_MS);
+    this.timeSyncTimer = setTimeout(() => {
+      this.requestTimeSync();
+      this.clockBurstCount += 1;
+      this._scheduleTimeSync();
+    }, nextDelay);
+  }
+
   startPolling() {
     this.stopPolling();
-    this.wsClient.send({ type: 'REQUEST_STATE' });
-    this.requestTimeSync();
-    this.syncTimer = setInterval(
-      () => this._reconcile(),
-      CONFIG.SYNC_CHECK_INTERVAL_MS,
-    );
-    this.pollTimer = setInterval(
-      () => this.wsClient.send({ type: 'REQUEST_STATE' }),
-      CONFIG.STATE_POLL_INTERVAL_MS,
-    );
-    this.timeSyncTimer = setInterval(
-      () => this.requestTimeSync(),
-      CONFIG.TIME_SYNC_INTERVAL_MS,
-    );
+    this.clockBurstCount = 0;
+    this.wsClient.send({ type: 'REQUEST_STATE' }, { skipIfBusy: true });
+    this._scheduleReconcile(0);
+    this._scheduleStatePoll();
+    this._scheduleTimeSync(0);
   }
 
   stopPolling() {
-    clearInterval(this.pollTimer);
-    clearInterval(this.syncTimer);
-    clearInterval(this.timeSyncTimer);
+    clearTimeout(this.pollTimer);
+    clearTimeout(this.syncTimer);
+    clearTimeout(this.timeSyncTimer);
     this.pollTimer = null;
     this.syncTimer = null;
     this.timeSyncTimer = null;
