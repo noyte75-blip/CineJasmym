@@ -5,9 +5,9 @@
 // ws://localhost:8080
 
 const CONFIG = {
-  WS_URL: 'wss://encontro-jasmym-e-livia-backend-uq81.onrender.com',
+  WS_URL: 'wss://cinejasmym.onrender.com',
   // Enquanto estiver testando no seu computador, use:
-  // WS_URL: 'wss://encontro-jasmym-e-livia-backend-uq81.onrender.com',
+  // WS_URL: 'wss://cinejasmym.onrender.com',
 
   // O servidor é o relógio oficial. O cliente apenas consulta este estado.
   // Menos de 220 ms é praticamente imperceptível. Diferenças médias são corrigidas pela
