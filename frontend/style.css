@@ -660,6 +660,7 @@ body.cinema-mode .video-wrapper .player-container, body.cinema-mode .video-wrapp
 body.cinema-mode .room-header, body.cinema-mode .video-controls, body.cinema-mode .video-input-card { visibility: hidden; pointer-events: none; }
 body.cinema-mode .chat-close-mobile { display: inline-grid; }
 body.cinema-mode .video-wrapper .player-container video { object-fit: contain; }
+body.cinema-mode .video-wrapper .player-container iframe { width: 100%; height: 100%; }
 body.cinema-mode .fullscreen-gesture-layer {
   position: absolute;
   z-index: 4;
@@ -702,6 +703,17 @@ body.cinema-mode .chat-message-status { color: rgba(255,255,255,.72); }
 body.cinema-mode .chat-message-status.seen { color: #ffe1a1; }
 body.cinema-mode .chat-message-status.pending { color: #d8ceff; }
 body.cinema-mode .chat-message-status.failed { color: #ffb3bd; }
+
+@media (max-width: 720px) {
+  body.cinema-mode .chat-panel.open { height: 128px; min-height: 0; max-height: 128px; bottom: 12px; }
+  body.cinema-mode .chat-panel .chat-header { min-height: 34px; padding: 6px 10px; }
+  body.cinema-mode .chat-panel .chat-kicker, body.cinema-mode .chat-panel .chat-header-actions { display: none; }
+  body.cinema-mode .chat-panel .chat-messages { padding: 7px 10px; }
+  body.cinema-mode .chat-panel .chat-message { display: none; }
+  body.cinema-mode .chat-panel .chat-message:nth-last-child(-n + 2) { display: block; }
+  body.cinema-mode .chat-panel .chat-bubble { padding: 5px 8px; font-size: 12px; }
+  body.cinema-mode .chat-panel .chat-form, body.cinema-mode .chat-panel .reply-preview-bar, body.cinema-mode .chat-panel .media-preview-bar, body.cinema-mode .chat-panel .chat-resize-handle { display: none; }
+}
 
 .person-badge.solo { color: var(--lilac-600); }
 .person-badge.solo .mini-avatar { opacity: .72; box-shadow: 0 0 0 2px var(--lilac-300); }
