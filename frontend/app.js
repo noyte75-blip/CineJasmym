@@ -964,11 +964,33 @@ function updateFullscreenButton() {
   els.btnFullscreen.setAttribute('aria-label', els.btnFullscreen.title);
 }
 
+// Em vez de tentar prever e neutralizar cada ancestral que poderia interferir
+// no position:fixed (backdrop-filter, transform, etc.), a versão mais segura é
+// tirar o video-wrapper de dentro da hierarquia de cards por completo durante
+// a tela cheia, e devolver ao lugar de origem ao sair. Assim nenhum elemento
+// no meio do caminho pode voltar a causar esse tipo de corte/vazamento.
+let cinemaModeHome = null;
+
+function enterCinemaMode() {
+  if (cinemaModeHome) return;
+  cinemaModeHome = { parent: els.videoWrapper.parentElement, next: els.videoWrapper.nextSibling };
+  document.body.appendChild(els.videoWrapper);
+  document.body.classList.add('cinema-mode');
+}
+
+function exitCinemaMode() {
+  document.body.classList.remove('cinema-mode');
+  if (cinemaModeHome) {
+    cinemaModeHome.parent.insertBefore(els.videoWrapper, cinemaModeHome.next);
+    cinemaModeHome = null;
+  }
+}
+
 async function exitFullscreenView() {
   const hadCinemaMode = document.body.classList.contains('cinema-mode');
   const hadNativeFullscreen = nativeFullscreenIsActive();
   state.fullscreenNativeRequested = false;
-  document.body.classList.remove('cinema-mode');
+  exitCinemaMode();
   closeChat();
   hideFullscreenGestureHint();
   try {
@@ -992,7 +1014,7 @@ async function toggleFullscreen() {
   // o chat continua dentro do elemento em tela cheia, por cima do vídeo, em
   // vez de sumir ao tentar deslizar. Onde a API não existir, fica o fallback
   // de modo cinema dentro da página.
-  document.body.classList.add('cinema-mode');
+  enterCinemaMode();
   state.fullscreenNativeRequested = false;
   try {
     const root = document.documentElement;
@@ -1007,6 +1029,7 @@ async function toggleFullscreen() {
   updateFullscreenButton();
   showFullscreenGestureHint();
 }
+
 
 async function togglePictureInPicture() {
   const video = state.currentVideoType === 'html5' ? state.player?.video : null;
@@ -1052,7 +1075,7 @@ const handleFullscreenChange = () => {
   // a página poderia continuar com o vídeo fixo sobre toda a tela.
   if (!nativeFullscreenIsActive() && state.fullscreenNativeRequested) {
     state.fullscreenNativeRequested = false;
-    document.body.classList.remove('cinema-mode');
+    exitCinemaMode();
     closeChat();
     hideFullscreenGestureHint();
   }
