@@ -33,6 +33,7 @@ const els = {
   btnSoloMode: document.getElementById('btn-solo-mode'),
   btnPip: document.getElementById('btn-pip'),
   btnFullscreen: document.getElementById('btn-fullscreen'),
+  fullscreenGestureLayer: document.getElementById('fullscreen-gesture-layer'),
   fullscreenGestureHint: document.getElementById('fullscreen-gesture-hint'),
   btnExitFullscreen: document.getElementById('btn-exit-fullscreen'),
   btnDiscussMoment: document.getElementById('btn-discuss-moment'),
@@ -123,14 +124,17 @@ const state = {
   hiddenMessageIds: new Set(),
   attentionToastTimer: null,
   fullscreenHintTimer: null,
+  fullscreenNativeRequested: false,
+  pendingChatMessages: new Map(),
+  backendVersionWarningShown: false,
   audioContext: null,
 };
 
 const SESSION_STORAGE_KEY = 'encontro-jasmym-sessions-v1';
 const PROFILE_STORAGE_KEY = 'encontro-jasmym-profile-v1';
-const UI_STORAGE_KEY = 'encontro-jasmym-ui-v15';
+const UI_STORAGE_KEY = 'encontro-jasmym-ui-v16-2';
 const HIDDEN_CHAT_STORAGE_KEY = 'encontro-jasmym-hidden-chat-v14';
-const PROTOCOL_VERSION = 16;
+const PROTOCOL_VERSION = 17;
 const DEFAULT_VIDEO_PLACEHOLDER_HTML = els.videoPlaceholder.innerHTML;
 
 function readJson(key, fallback) {
@@ -218,6 +222,21 @@ function maybeMarkChatUnread() {
 function showNativeNotification(title, body) {
   if (!document.hidden || !state.notificationsEnabled || !notificationIsSupported() || Notification.permission !== 'granted') return;
   try { new Notification(title, { body }); } catch { /* navegador bloqueou */ }
+}
+
+function noteBackendVersion(message) {
+  const version = Number(message?.serverVersion);
+  const upToDate = Number.isInteger(version) && version >= PROTOCOL_VERSION;
+  if (upToDate || state.backendVersionWarningShown || !state.roomCode) return upToDate;
+  state.backendVersionWarningShown = true;
+  setConnectionStatus('backend precisa atualizar', 'warning');
+  showChatError('O servidor ainda está na versão anterior. Publique também a pasta backend desta versão; mensagens, respostas e GIFs só ficam confirmados depois disso.');
+  return false;
+}
+
+function messageIsMine(message) {
+  if (typeof message?.mine === 'boolean') return message.mine;
+  return Boolean(message?.participantId && message.participantId === state.participantId);
 }
 
 function getAttentionAudioContext() {
@@ -537,6 +556,7 @@ function attachRoomListeners(client) {
     loadHiddenMessagesForRoom();
     if (enteringAnotherRoom) {
       state.readMessageIds.clear();
+      state.backendVersionWarningShown = false;
       els.chatMessages.replaceChildren();
       showChatWelcomeState();
     }
@@ -546,16 +566,33 @@ function attachRoomListeners(client) {
     const inviteUrl = new URL(location.href);
     inviteUrl.searchParams.set('sala', state.roomCode);
     history.replaceState({}, '', inviteUrl);
+    noteBackendVersion(message);
     handleRoomState(message, true);
     client.send({ type: 'REQUEST_STATE' }, { skipIfBusy: true });
   };
 
   client.on('ROOM_CREATED', entered);
   client.on('JOINED', entered);
-  client.on('ROOM_STATE', (message) => activeClient() && handleRoomState(message));
-  client.on('STATE', (message) => activeClient() && handleRoomState(message));
-  client.on('HEARTBEAT', (message) => activeClient() && handleRoomState(message));
-  client.on('COMMAND_ACK', (message) => activeClient() && handleRoomState(message));
+  client.on('ROOM_STATE', (message) => {
+    if (!activeClient()) return;
+    noteBackendVersion(message);
+    handleRoomState(message);
+  });
+  client.on('STATE', (message) => {
+    if (!activeClient()) return;
+    noteBackendVersion(message);
+    handleRoomState(message);
+  });
+  client.on('HEARTBEAT', (message) => {
+    if (!activeClient()) return;
+    noteBackendVersion(message);
+    handleRoomState(message);
+  });
+  client.on('COMMAND_ACK', (message) => {
+    if (!activeClient()) return;
+    noteBackendVersion(message);
+    handleRoomState(message);
+  });
   client.on('PONG', (message) => {
     if (activeClient()) state.sync?.updateClockSample(message);
   });
@@ -577,13 +614,16 @@ function attachRoomListeners(client) {
   });
   client.on('CHAT_HISTORY', (message) => {
     if (!activeClient() || (message.roomCode && message.roomCode !== state.roomCode)) return;
+    noteBackendVersion(message);
     renderChatHistory(message.messages);
     markVisibleIncomingMessagesRead();
   });
   client.on('CHAT_MESSAGE', (message) => {
     if (!activeClient()) return;
+    noteBackendVersion(message);
     const sender = state.participants.find((person) => person.id === message.participantId);
-    const mine = message.participantId === state.participantId;
+    const mine = messageIsMine(message);
+    if (mine) confirmPendingChatMessage(message.id, message.readBy);
     const row = addChatMessage(message.from, message.text, mine, {
       id: message.id,
       participantId: message.participantId,
@@ -626,8 +666,9 @@ function attachRoomListeners(client) {
     setLandingBusy(null, false);
     showLandingError(message || 'Essa sala já tem duas pessoas.');
   });
-  client.on('ERROR', ({ message }) => {
+  client.on('ERROR', ({ message, messageId }) => {
     if (!activeClient()) return;
+    if (messageId) markChatMessageFailed(messageId);
     if (!state.roomCode) setLandingBusy(null, false);
     if (state.roomCode) showChatError(message || 'Algo deu errado.');
     else showLandingError(message || 'Algo deu errado.');
@@ -891,13 +932,12 @@ function setSoloMode(active) {
   setConnectionStatus('voltando para a reprodução conjunta…', 'working');
 }
 
-function fullscreenIsActive() {
-  return document.body.classList.contains('cinema-mode')
-    || Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+function nativeFullscreenIsActive() {
+  return Boolean(document.fullscreenElement || document.webkitFullscreenElement);
 }
 
-function shouldUseCinemaMode() {
-  return matchMedia('(max-width: 720px), (pointer: coarse)').matches;
+function fullscreenIsActive() {
+  return document.body.classList.contains('cinema-mode') || nativeFullscreenIsActive();
 }
 
 function hideFullscreenGestureHint() {
@@ -924,10 +964,13 @@ function updateFullscreenButton() {
 
 async function exitFullscreenView() {
   const hadCinemaMode = document.body.classList.contains('cinema-mode');
+  const hadNativeFullscreen = nativeFullscreenIsActive();
+  state.fullscreenNativeRequested = false;
   document.body.classList.remove('cinema-mode');
+  closeChat();
   hideFullscreenGestureHint();
   try {
-    if (document.fullscreenElement || document.webkitFullscreenElement) {
+    if (hadNativeFullscreen) {
       if (document.exitFullscreen) await document.exitFullscreen();
       else document.webkitExitFullscreen?.();
     }
@@ -943,25 +986,22 @@ async function toggleFullscreen() {
     await exitFullscreenView();
     return;
   }
-  // No celular o modo cinema ocupa toda a viewport, mas continua na página:
-  // assim o gesto pode revelar o chat sem tocar no relógio do vídeo.
-  if (shouldUseCinemaMode()) {
-    document.body.classList.add('cinema-mode');
-    updateFullscreenButton();
-    showFullscreenGestureHint();
-    return;
-  }
+  // A raiz inteira entra em fullscreen sempre que o navegador permitir. Assim
+  // o chat continua dentro do elemento em tela cheia, por cima do vídeo, em
+  // vez de sumir ao tentar deslizar. Onde a API não existir, fica o fallback
+  // de modo cinema dentro da página.
+  document.body.classList.add('cinema-mode');
+  state.fullscreenNativeRequested = false;
   try {
-    if (els.videoWrapper.requestFullscreen) {
-      await els.videoWrapper.requestFullscreen();
-      showFullscreenGestureHint();
-      return;
+    const root = document.documentElement;
+    const request = root.requestFullscreen || root.webkitRequestFullscreen;
+    if (request) {
+      await request.call(root);
+      state.fullscreenNativeRequested = true;
     }
   } catch {
-    // Alguns navegadores não liberam a API de tela cheia. O modo cinema
-    // mantém o mesmo visual e os controles de gesto funcionando.
+    // O fallback permanece visualmente em tela cheia dentro da página.
   }
-  document.body.classList.add('cinema-mode');
   updateFullscreenButton();
   showFullscreenGestureHint();
 }
@@ -1006,6 +1046,14 @@ els.btnSoloMode.addEventListener('click', () => setSoloMode(!state.soloMode));
 els.btnFullscreen.addEventListener('click', toggleFullscreen);
 els.btnPip.addEventListener('click', togglePictureInPicture);
 const handleFullscreenChange = () => {
+  // Escape/voltar do fullscreen nativo também encerra o modo cinema. Sem isso
+  // a página poderia continuar com o vídeo fixo sobre toda a tela.
+  if (!nativeFullscreenIsActive() && state.fullscreenNativeRequested) {
+    state.fullscreenNativeRequested = false;
+    document.body.classList.remove('cinema-mode');
+    closeChat();
+    hideFullscreenGestureHint();
+  }
   updateFullscreenButton();
   if (fullscreenIsActive()) showFullscreenGestureHint();
   else hideFullscreenGestureHint();
@@ -1020,36 +1068,35 @@ function videoWrapperIsFullscreen() {
 }
 
 let fullscreenSwipe = null;
-els.videoWrapper.addEventListener('pointerdown', (event) => {
-  if (!videoWrapperIsFullscreen() || event.target.closest?.('button, input, select, textarea, a')) return;
+const fullscreenGestureSurface = els.fullscreenGestureLayer || els.videoWrapper;
+fullscreenGestureSurface.addEventListener('pointerdown', (event) => {
+  if (!videoWrapperIsFullscreen()) return;
   fullscreenSwipe = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
-  try { els.videoWrapper.setPointerCapture?.(event.pointerId); } catch { /* navegador já capturou ou recusou */ }
+  try { fullscreenGestureSurface.setPointerCapture?.(event.pointerId); } catch { /* navegador já capturou ou recusou */ }
   // Tocar no vídeo em tela cheia só revela a dica; não altera play/pause nem
   // dispara uma sincronização antiga por acidente.
   event.preventDefault();
 });
-els.videoWrapper.addEventListener('pointerup', async (event) => {
+fullscreenGestureSurface.addEventListener('pointermove', (event) => {
+  if (fullscreenSwipe?.pointerId === event.pointerId) event.preventDefault();
+});
+fullscreenGestureSurface.addEventListener('pointerup', (event) => {
   if (!fullscreenSwipe || fullscreenSwipe.pointerId !== event.pointerId) return;
   const deltaX = event.clientX - fullscreenSwipe.x;
   const deltaY = event.clientY - fullscreenSwipe.y;
   fullscreenSwipe = null;
   try {
-    if (els.videoWrapper.hasPointerCapture?.(event.pointerId)) els.videoWrapper.releasePointerCapture?.(event.pointerId);
+    if (fullscreenGestureSurface.hasPointerCapture?.(event.pointerId)) fullscreenGestureSurface.releasePointerCapture?.(event.pointerId);
   } catch { /* a captura pode ter sido liberada pelo navegador */ }
   if (deltaX <= -48 && Math.abs(deltaX) > Math.abs(deltaY)) {
     hideFullscreenGestureHint();
-    if (document.body.classList.contains('cinema-mode')) {
-      openChat({ focus: false });
-    } else {
-      await exitFullscreenView();
-      openChat({ focus: false });
-    }
+    openChat({ focus: false });
   } else if (Math.abs(deltaX) < 12 && Math.abs(deltaY) < 12) {
     showFullscreenGestureHint(2200);
   }
   event.preventDefault();
 });
-els.videoWrapper.addEventListener('pointercancel', () => { fullscreenSwipe = null; });
+fullscreenGestureSurface.addEventListener('pointercancel', () => { fullscreenSwipe = null; });
 els.btnExitFullscreen?.addEventListener('click', (event) => {
   event.stopPropagation();
   exitFullscreenView();
@@ -1129,6 +1176,7 @@ function leaveCurrentRoom() {
   clearTimeout(state.reconnectTimer);
   clearTimeout(state.reconnectChoiceTimer);
   clearTimeout(state.progressTimer);
+  clearPendingChatMessages();
   clearRoomSession(roomCode);
   client?.send({ type: 'LEAVE_ROOM' });
   client?.disconnect();
@@ -1210,6 +1258,59 @@ function findChatMessageRow(messageId) {
     .find((row) => row.dataset.messageId === messageId) || null;
 }
 
+function setChatMessageDeliveryStatus(messageId, text, tone = '') {
+  const row = findChatMessageRow(messageId);
+  if (!row || !row.classList.contains('mine')) return;
+  const status = row.querySelector('.chat-message-status');
+  if (!status) return;
+  status.textContent = text;
+  status.classList.toggle('seen', tone === 'seen');
+  status.classList.toggle('pending', tone === 'pending');
+  status.classList.toggle('failed', tone === 'failed');
+  if (tone) row.dataset.deliveryState = tone;
+  else delete row.dataset.deliveryState;
+}
+
+function clearPendingChatMessage(messageId) {
+  const pending = state.pendingChatMessages.get(messageId);
+  if (!pending) return false;
+  clearTimeout(pending.timer);
+  state.pendingChatMessages.delete(messageId);
+  return true;
+}
+
+function queuePendingChatMessage(messageId) {
+  clearPendingChatMessage(messageId);
+  setChatMessageDeliveryStatus(messageId, 'Enviando…', 'pending');
+  const timer = setTimeout(() => {
+    if (!clearPendingChatMessage(messageId)) return;
+    // O cartão não finge que chegou: sem o eco do servidor, continua visível
+    // para quem escreveu, mas fica marcado como não confirmado.
+    setChatMessageDeliveryStatus(messageId, '⚠ Não confirmada', 'failed');
+  }, 8_000);
+  state.pendingChatMessages.set(messageId, { timer });
+}
+
+function confirmPendingChatMessage(messageId, readBy = []) {
+  if (!messageId) return;
+  clearPendingChatMessage(messageId);
+  const row = findChatMessageRow(messageId);
+  if (!row || !row.classList.contains('mine')) return;
+  delete row.dataset.deliveryState;
+  updateChatMessageReadStatus(messageId, readBy);
+}
+
+function markChatMessageFailed(messageId) {
+  if (!messageId) return;
+  clearPendingChatMessage(messageId);
+  setChatMessageDeliveryStatus(messageId, '⚠ Não enviada', 'failed');
+}
+
+function clearPendingChatMessages() {
+  for (const { timer } of state.pendingChatMessages.values()) clearTimeout(timer);
+  state.pendingChatMessages.clear();
+}
+
 function peerHasReadMessage(readBy) {
   return Array.isArray(readBy) && readBy.some((id) => id && id !== state.participantId);
 }
@@ -1219,11 +1320,13 @@ function updateChatMessageReadStatus(messageId, readBy = []) {
   if (peerHasReadMessage(readBy)) state.readMessageIds.add(messageId);
   const row = findChatMessageRow(messageId);
   if (!row || !row.classList.contains('mine')) return;
+  if (row.dataset.deliveryState === 'pending') return;
   const status = row.querySelector('.chat-message-status');
   if (!status) return;
   const seen = state.readMessageIds.has(messageId) || peerHasReadMessage(readBy);
   status.textContent = seen ? '✓✓ Visto' : '✓ Enviada';
   status.classList.toggle('seen', seen);
+  status.classList.remove('pending', 'failed');
 }
 
 function markChatMessageRead(messageId, participantId) {
@@ -1257,7 +1360,9 @@ function renderChatHistory(messages) {
   for (const message of history) {
     if (!message || typeof message !== 'object') continue;
     const sender = state.participants.find((person) => person.id === message.participantId);
-    const row = addChatMessage(message.from, message.text, message.participantId === state.participantId, {
+    const mine = messageIsMine(message);
+    if (mine) confirmPendingChatMessage(message.id, message.readBy);
+    const row = addChatMessage(message.from, message.text, mine, {
       id: message.id,
       participantId: message.participantId,
       media: message.media,
@@ -1325,6 +1430,8 @@ function addChatMessage(author, text, mine, { id = null, participantId = null, m
   if (id) {
     const existing = findChatMessageRow(id);
     if (existing) {
+      existing.classList.toggle('mine', mine);
+      existing.classList.toggle('theirs', !mine);
       updateChatMessageReadStatus(id, readBy);
       return existing;
     }
@@ -1354,7 +1461,26 @@ function addChatMessage(author, text, mine, { id = null, participantId = null, m
     image.className = 'chat-media';
     image.src = media;
     image.alt = `Imagem enviada por ${author}`;
+    image.decoding = 'async';
+    image.loading = /^https:\/\//i.test(media) ? 'eager' : 'lazy';
+    // Alguns CDNs de GIF recusam a imagem quando recebem o endereço do site
+    // no cabeçalho Referer. O GIF continua vindo da URL oficial, mas sem
+    // revelar nem depender da página de quem recebeu.
+    image.referrerPolicy = 'no-referrer';
     bubble.appendChild(image);
+    if (/^https:\/\//i.test(media)) {
+      const fallback = document.createElement('a');
+      fallback.className = 'chat-media-fallback hidden';
+      fallback.href = media;
+      fallback.target = '_blank';
+      fallback.rel = 'noreferrer';
+      fallback.textContent = 'GIF indisponível aqui · abrir';
+      image.addEventListener('error', () => {
+        image.classList.add('hidden');
+        fallback.classList.remove('hidden');
+      }, { once: true });
+      bubble.appendChild(fallback);
+    }
   }
   if (text) {
     const paragraph = document.createElement('p');
@@ -1441,8 +1567,22 @@ els.chatForm.addEventListener('submit', (event) => {
   if (!text && !media) return;
   const messageId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const replyTo = state.replyTo;
+  // Mostra a própria mensagem imediatamente, mas como "Enviando…". Ela só
+  // vira "Enviada" quando a cópia canônica volta do servidor.
+  addChatMessage(state.myName || 'Você', text, true, {
+    id: messageId,
+    participantId: state.participantId,
+    media,
+    avatar: state.avatar,
+    replyTo,
+  });
+  queuePendingChatMessage(messageId);
   const sent = state.wsClient?.send({ type: 'CHAT_MESSAGE', messageId, text, media, replyTo });
-  if (!sent) return showChatError('A conexão caiu antes de enviar. Tente novamente.');
+  if (!sent) {
+    markChatMessageFailed(messageId);
+    showChatError('A conexão caiu antes de enviar. Tente novamente.');
+    return;
+  }
   els.chatInput.value = '';
   clearPendingMedia();
   clearReplyTo();

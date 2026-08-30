@@ -1,4 +1,4 @@
-# Encontro de Jasmym e Lívia — versão 16.1
+# Encontro de Jasmym e Lívia — versão 16.2
 
 Watch Together simples para exatamente duas pessoas, com vídeo sincronizado,
 chat, fotos, GIFs e foto de perfil. O tema visual usa jasmim, lírio, tons de
@@ -52,8 +52,8 @@ rosa, lilás e verde.
   bolhas, menus e campos também ficam escuros, com avisos bobos de fantasma.
 - No celular, o layout usa `dvh` como correção moderna de viewport, os
   controles têm 44px e o vídeo usa proporção 16:9 sem ser esticado.
-- Em tela cheia, deslizar o vídeo para a esquerda sai da tela cheia e abre o
-  chat para continuar a conversa.
+- Em tela cheia, deslizar o vídeo para a esquerda abre o chat por cima do
+  vídeo, sem sair do modo cinema.
 
 ## Correção da V16.1 — chat compartilhado de verdade
 
@@ -73,9 +73,25 @@ rosa, lilás e verde.
   os campos de mensagem/GIF usam 16px para o Safari não aplicar zoom ao digitar.
 - O texto extra do fantasma foi removido do topo do chat no modo Terror.
 
+## Correção da V16.2 — confirmação e modo cinema
+
+- O servidor marca cada mensagem como **sua** ou **da outra pessoa** para a
+  tela que a recebeu. Isso não depende de um identificador local que possa
+  ficar antigo ao reconectar pelo celular.
+- Sua mensagem aparece na hora como `Enviando…`, vira `Enviada` somente quando
+  o servidor devolve a cópia confirmada e fica `Não confirmada` se esse retorno
+  não vier. Assim a interface não finge que uma mensagem chegou.
+- Respostas diretas, GIFs e histórico usam o mesmo registro confirmado nas
+  duas telas; links atuais de todos os CDNs oficiais do GIPHY são aceitos.
+- Se o backend no Render estiver antigo, o site avisa em vez de deixar a
+  conversa aparentar funcionar parcialmente.
+- A tela cheia agora usa um modo cinema com uma camada própria de gesto: tocar
+  apenas revela a dica e deslizar para a esquerda abre um chat translúcido por
+  cima do vídeo, sem tocar no controle de reprodução.
+
 ## Correção de cache
 
-- Todos os arquivos estáticos receberam URLs `?v=16.1`. Assim, após o deploy,
+- Todos os arquivos estáticos receberam URLs `?v=16.2`. Assim, após o deploy,
   os aparelhos baixam a configuração atual, inclusive a busca de GIFs, sem
   depender de limpar o cache manualmente.
 - Esta correção atualiza frontend e backend para que a confirmação de mensagem
@@ -146,7 +162,7 @@ para os dois aparelhos e guarda o estado de visto no histórico da sala.
 
 1. Substitua as pastas `frontend/` e `backend/` no projeto.
 2. Faça o deploy do backend no Render e, depois, o deploy da Netlify.
-3. Abra o site normalmente: os scripts agora terminam em `?v=16.1` e não usam
+3. Abra o site normalmente: os scripts agora terminam em `?v=16.2` e não usam
    a cópia antiga guardada no navegador.
 4. Pesquise um GIF para confirmar a atualização.
 

@@ -17,7 +17,10 @@ const ALLOWED_ORIGINS = new Set(
   (process.env.ALLOWED_ORIGINS || '').split(',').map((value) => value.trim()).filter(Boolean),
 );
 
-const PROTOCOL_VERSION = 16;
+// O número interno muda quando o formato das mensagens muda. Assim o
+// frontend consegue avisar claramente caso o Render ainda esteja em uma
+// versão antiga do backend.
+const PROTOCOL_VERSION = 17;
 // Pequeno tempo para os dois navegadores receberem o PLAY antes de o relógio
 // começar a avançar. Isso reduz a diferença inicial sem transmitir o vídeo.
 const PLAY_START_DELAY_MS = 700;
@@ -69,13 +72,14 @@ function normalizeGiphyMediaUrl(value) {
   try {
     const parsed = new URL(raw);
     const host = parsed.hostname.toLowerCase();
-    const allowedHost = host === 'i.giphy.com' || /^media\d*\.giphy\.com$/.test(host);
-    // A API atual do GIPHY usa caminhos como
-    // /media/v1.Y2lk.../200w.gif?cid=..., que a regra antiga recusava.
-    // Continua aceitando apenas arquivos de imagem no CDN oficial do GIPHY.
-    const mediaPath = /^\/media\/[a-zA-Z0-9._/-]+\.(?:gif|webp)$/i;
-    const imagePath = /^\/[a-zA-Z0-9_-]+\.(?:gif|webp)$/i;
-    if (parsed.protocol !== 'https:' || !allowedHost || !(mediaPath.test(parsed.pathname) || imagePath.test(parsed.pathname))) {
+    // O GIPHY alterna entre media.giphy.com, media0.giphy.com e domínios
+    // giphyusercontent. Todos são CDNs oficiais; limitar somente a dois
+    // formatos fazia a busca funcionar, mas recusava o GIF ao enviá-lo.
+    const allowedHost = host === 'giphy.com'
+      || host.endsWith('.giphy.com')
+      || host.endsWith('.giphyusercontent.com');
+    const imageFile = /\.(?:gif|webp)$/i.test(parsed.pathname);
+    if (parsed.protocol !== 'https:' || !allowedHost || !imageFile) {
       return null;
     }
     return parsed.href;
@@ -142,8 +146,8 @@ function send(ws, data) {
   if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(data));
 }
 
-function fail(ws, code, message) {
-  send(ws, { type: 'ERROR', code, message });
+function fail(ws, code, message, extra = {}) {
+  send(ws, { type: 'ERROR', code, message, ...extra });
 }
 
 function roomFor(ws) {
@@ -208,6 +212,7 @@ function roomState(room, recipient = null, type = 'ROOM_STATE', includeParticipa
   const videoState = projectedVideoState(room);
   return {
     type,
+    serverVersion: PROTOCOL_VERSION,
     roomCode: room.code,
     participantId: recipient?.id || null,
     participants: includeParticipants ? publicParticipants(room) : undefined,
@@ -271,17 +276,23 @@ function normalizeStoredChatMessage(value) {
   };
 }
 
-function chatHistory(room) {
-  return [...room.chatMessages.values()].map(({ id, text, media, replyTo, readBy, from, participantId, sentAt }) => ({
-    id,
-    text,
-    media,
-    replyTo,
-    readBy,
-    from,
-    participantId,
-    sentAt,
-  }));
+function chatHistory(room, recipient = null) {
+  return [...room.chatMessages.values()].map(({ id, text, media, replyTo, readBy, from, participantId, sentAt }) => {
+    const message = {
+      id,
+      text,
+      media,
+      replyTo,
+      readBy,
+      from,
+      participantId,
+      sentAt,
+    };
+    // `mine` é calculado pelo servidor para quem recebe. Não depende de um
+    // participantId local possivelmente antigo depois de uma reconexão móvel.
+    if (recipient) message.mine = participantId === recipient.id;
+    return message;
+  });
 }
 
 function chatHistoryCost(room) {
@@ -308,11 +319,25 @@ function rememberChatMessage(room, message) {
 }
 
 function sendChatHistory(ws, room) {
+  const recipient = room.participants.get(ws.participantId);
   send(ws, {
     type: 'CHAT_HISTORY',
     roomCode: room.code,
-    messages: chatHistory(room),
+    serverVersion: PROTOCOL_VERSION,
+    messages: chatHistory(room, recipient),
   });
+}
+
+function broadcastChatMessage(room, chatMessage) {
+  for (const recipient of room.participants.values()) {
+    if (!recipient.ws) continue;
+    send(recipient.ws, {
+      type: 'CHAT_MESSAGE',
+      serverVersion: PROTOCOL_VERSION,
+      ...chatMessage,
+      mine: recipient.id === chatMessage.participantId,
+    });
+  }
 }
 
 function serializeRoom(room) {
@@ -658,15 +683,16 @@ function handleRoomMessage(ws, msg) {
     }, ws);
   }
   if (msg.type === 'CHAT_MESSAGE') {
+    const requestedMessageId = cleanMessageId(msg.messageId);
     const text = cleanText(msg.text ?? msg.message, CHAT_MAX_LENGTH);
     const media = normalizeChatMedia(msg.media);
     const requestedMedia = msg.media !== undefined && msg.media !== null && msg.media !== '';
     if (requestedMedia && !media) {
-      return fail(ws, 'INVALID_CHAT_MEDIA', 'Esse GIF ou imagem não pôde ser enviado. Escolha-o novamente e tente de novo.');
+      return fail(ws, 'INVALID_CHAT_MEDIA', 'Esse GIF ou imagem não pôde ser enviado. Escolha-o novamente e tente de novo.', { messageId: requestedMessageId });
     }
-    if (!text && !media) return fail(ws, 'INVALID_CHAT', 'A mensagem está vazia.');
-    const messageId = cleanMessageId(msg.messageId) || crypto.randomUUID();
-    if (room.chatMessages.has(messageId)) return fail(ws, 'DUPLICATE_CHAT', 'Essa mensagem já foi enviada.');
+    if (!text && !media) return fail(ws, 'INVALID_CHAT', 'A mensagem está vazia.', { messageId: requestedMessageId });
+    const messageId = requestedMessageId || crypto.randomUUID();
+    if (room.chatMessages.has(messageId)) return fail(ws, 'DUPLICATE_CHAT', 'Essa mensagem já foi enviada.', { messageId });
     const chatMessage = {
       id: messageId,
       text,
@@ -680,10 +706,7 @@ function handleRoomMessage(ws, msg) {
     rememberChatMessage(room, chatMessage);
     touch(room);
     persistRooms();
-    return broadcast(room, {
-      type: 'CHAT_MESSAGE',
-      ...chatMessage,
-    });
+    return broadcastChatMessage(room, chatMessage);
   }
   if (msg.type === 'CHAT_READ') {
     const messageId = cleanMessageId(msg.messageId);
@@ -699,6 +722,7 @@ function handleRoomMessage(ws, msg) {
     const sender = room.participants.get(stored.participantId);
     return send(sender?.ws, {
       type: 'CHAT_READ',
+      serverVersion: PROTOCOL_VERSION,
       messageId,
       readerId: participant.id,
       readBy: stored.readBy,
