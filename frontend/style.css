@@ -600,7 +600,20 @@ body[data-theme="terror"] .chat-kicker::after { content:' · sem spoilers para o
 .video-wrapper:fullscreen, .video-wrapper:-webkit-full-screen { width: 100%; height: 100%; border-radius: 0; background: #111; }
 .video-wrapper:fullscreen .player-container, .video-wrapper:-webkit-full-screen .player-container { position: absolute; inset: 0; }
 .video-wrapper:fullscreen .video-placeholder, .video-wrapper:-webkit-full-screen .video-placeholder { position: absolute; inset: 0; }
-.video-wrapper:fullscreen::after, .video-wrapper:-webkit-full-screen::after { content: 'Deslize para a esquerda para abrir o chat'; position: absolute; z-index: 8; right: 16px; bottom: 14px; padding: 7px 10px; border-radius: 999px; color: rgba(255,255,255,.88); background: rgba(0,0,0,.5); font-size: 11px; pointer-events: none; }
+
+/* Camada transparente que só existe em tela cheia. Fica por cima do player
+   (que pode ser um iframe do YouTube ou um <video>) para garantir que o
+   toque/arraste chegue sempre ao nosso JS, e não seja engolido pelo player. */
+.fullscreen-gesture-layer { position: absolute; inset: 0; z-index: 7; display: none; touch-action: pan-y; }
+.video-wrapper:fullscreen .fullscreen-gesture-layer,
+.video-wrapper:-webkit-full-screen .fullscreen-gesture-layer { display: block; }
+.fullscreen-hint {
+  position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%) translateY(6px);
+  padding: 8px 14px; border-radius: 999px; color: rgba(255,255,255,.92); background: rgba(0,0,0,.55);
+  font-size: 12px; white-space: nowrap; opacity: 0; pointer-events: none;
+  transition: opacity .25s ease, transform .25s ease;
+}
+.fullscreen-hint.visible { opacity: 1; transform: translateX(-50%) translateY(0); }
 
 .person-badge.solo { color: var(--lilac-600); }
 .person-badge.solo .mini-avatar { opacity: .72; box-shadow: 0 0 0 2px var(--lilac-300); }
@@ -663,6 +676,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, label:focus-vis
   .time-display { order: 3; }
   .video-form { grid-template-columns: 1fr; }
   .video-form .secondary-btn { grid-column: auto; min-height: 42px; }
+  /* iOS dá zoom automático em qualquer input com fonte menor que 16px.
+     Sem isto, digitar no chat ou colar um link empurra a tela toda pro zoom. */
+  .video-form .text-input, .video-form .select-input, .chat-form .text-input, .gif-search-form .text-input { font-size: 16px; }
 
   .chat-panel {
     position: fixed;
@@ -677,7 +693,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, label:focus-vis
     border-radius: 22px;
   }
   .chat-panel.open { transform: translateY(0); }
-  .chat-panel.open { height: min(42dvh, 360px); bottom: max(7px, env(safe-area-inset-bottom)); }
+  .chat-panel.open { height: var(--chat-height, min(42dvh, 360px)); bottom: max(7px, env(safe-area-inset-bottom)); }
   .chat-panel.open + * { pointer-events: auto; }
   .chat-form { padding-bottom: max(13px, env(safe-area-inset-bottom)); }
   .chat-message-actions { opacity: 1; }
@@ -705,7 +721,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, label:focus-vis
   .people-strip { grid-row: 3; }
   .video-wrapper { min-height: 0; }
   .control-btn { flex: 0 0 44px; width: 44px; height: 44px; }
-  .chat-panel.open { min-height: 190px; height: min(40dvh, 300px); }
+  .chat-panel.open { min-height: 190px; height: var(--chat-height, min(40dvh, 300px)); }
 }
 
 @media (prefers-reduced-motion: reduce) {

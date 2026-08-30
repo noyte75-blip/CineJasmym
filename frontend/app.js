@@ -920,33 +920,73 @@ els.btnPlayPause.addEventListener('click', togglePlayback);
 els.btnSoloMode.addEventListener('click', () => setSoloMode(!state.soloMode));
 els.btnFullscreen.addEventListener('click', toggleFullscreen);
 els.btnPip.addEventListener('click', togglePictureInPicture);
-document.addEventListener('fullscreenchange', updateFullscreenButton);
-document.addEventListener('webkitfullscreenchange', updateFullscreenButton);
 
 function videoWrapperIsFullscreen() {
   return document.fullscreenElement === els.videoWrapper
     || document.webkitFullscreenElement === els.videoWrapper;
 }
 
-let fullscreenSwipe = null;
-els.videoWrapper.addEventListener('pointerdown', (event) => {
-  if (!videoWrapperIsFullscreen()) return;
-  fullscreenSwipe = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
-});
-els.videoWrapper.addEventListener('pointerup', async (event) => {
-  if (!fullscreenSwipe || fullscreenSwipe.pointerId !== event.pointerId) return;
-  const deltaX = event.clientX - fullscreenSwipe.x;
-  const deltaY = event.clientY - fullscreenSwipe.y;
-  fullscreenSwipe = null;
-  if (deltaX > -64 || Math.abs(deltaX) < Math.abs(deltaY)) return;
+// A camada de gestos só existe (e só recebe toque) durante a tela cheia — veja
+// o CSS de .fullscreen-gesture-layer. Fora da tela cheia, ela não existe na
+// tela e não pode interferir em nenhum outro toque do app (isso já causou um
+// bug de sincronização antes, então o toque aqui NUNCA deve dar play/pause).
+const gestureLayer = document.getElementById('fullscreen-gesture-layer');
+const fullscreenHint = document.getElementById('fullscreen-hint');
+let hintHideTimer = null;
+let gestureTouch = null;
+
+function showFullscreenHint() {
+  if (!fullscreenHint) return;
+  fullscreenHint.classList.add('visible');
+  clearTimeout(hintHideTimer);
+  hintHideTimer = setTimeout(() => fullscreenHint.classList.remove('visible'), 2600);
+}
+
+function hideFullscreenHint() {
+  clearTimeout(hintHideTimer);
+  fullscreenHint?.classList.remove('visible');
+}
+
+async function exitFullscreenAndOpenChat() {
+  hideFullscreenHint();
   try {
     if (document.exitFullscreen) await document.exitFullscreen();
     else document.webkitExitFullscreen?.();
   } finally {
     openChat();
   }
-});
-els.videoWrapper.addEventListener('pointercancel', () => { fullscreenSwipe = null; });
+}
+
+if (gestureLayer) {
+  gestureLayer.addEventListener('pointerdown', (event) => {
+    gestureTouch = { id: event.pointerId, x: event.clientX, y: event.clientY };
+  });
+  gestureLayer.addEventListener('pointerup', (event) => {
+    if (!gestureTouch || gestureTouch.id !== event.pointerId) return;
+    const deltaX = event.clientX - gestureTouch.x;
+    const deltaY = event.clientY - gestureTouch.y;
+    gestureTouch = null;
+    const isSwipeLeft = deltaX <= -60 && Math.abs(deltaX) > Math.abs(deltaY);
+    if (isSwipeLeft) {
+      exitFullscreenAndOpenChat();
+    } else {
+      // Toque simples (sem arrastar): só mostra a dica, nunca controla o vídeo.
+      showFullscreenHint();
+    }
+  });
+  gestureLayer.addEventListener('pointercancel', () => { gestureTouch = null; });
+}
+
+function handleFullscreenChange() {
+  updateFullscreenButton();
+  if (videoWrapperIsFullscreen()) {
+    showFullscreenHint();
+  } else {
+    hideFullscreenHint();
+  }
+}
+document.addEventListener('fullscreenchange', handleFullscreenChange);
+document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
 els.resumeBanner.addEventListener('click', () => {
   state.sync?.localPlay();
   setTimeout(updatePlayPauseIcon, 200);
