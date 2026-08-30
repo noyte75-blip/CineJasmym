@@ -88,12 +88,15 @@ class YoutubePlayer extends PlayerInterface {
           rel: 0,
           controls: 0,
           disablekb: 1,
-          fs: 0,
+          fs: 1,
           iv_load_policy: 3,
         },
         events: {
           onReady: () => {
             this._ready = true;
+            const iframe = this.player?.getIframe?.();
+            iframe?.setAttribute('allowfullscreen', '');
+            iframe?.setAttribute('allow', 'autoplay; fullscreen; picture-in-picture');
             finish(resolve);
           },
           onError: (event) => {

@@ -20,12 +20,18 @@ const els = {
   peerStatus: document.getElementById('peer-status'),
   roomCodeDisplay: document.getElementById('room-code-display'),
   btnCopyLink: document.getElementById('btn-copy-link'),
+  btnNeutralMode: document.getElementById('btn-neutral-mode'),
+  chatUnreadBadge: document.getElementById('chat-unread-badge'),
+  videoWrapper: document.getElementById('video-wrapper'),
   playerContainer: document.getElementById('player-container'),
   videoPlaceholder: document.getElementById('video-placeholder'),
   resumeBanner: document.getElementById('resume-banner'),
   btnPlayPause: document.getElementById('btn-playpause'),
   btnBack10: document.getElementById('btn-back10'),
   btnFwd10: document.getElementById('btn-fwd10'),
+  btnSoloMode: document.getElementById('btn-solo-mode'),
+  btnPip: document.getElementById('btn-pip'),
+  btnFullscreen: document.getElementById('btn-fullscreen'),
   seekBar: document.getElementById('seek-bar'),
   timeDisplay: document.getElementById('time-display'),
   syncDot: document.getElementById('sync-dot'),
@@ -45,6 +51,20 @@ const els = {
   chatError: document.getElementById('chat-error'),
   btnToggleChat: document.getElementById('btn-toggle-chat'),
   btnCloseChat: document.getElementById('btn-close-chat'),
+  btnNotifications: document.getElementById('btn-notifications'),
+  btnAttentionPing: document.getElementById('btn-attention-ping'),
+  btnClearChatForMe: document.getElementById('btn-clear-chat-for-me'),
+  btnOpenGif: document.getElementById('btn-open-gif'),
+  gifPicker: document.getElementById('gif-picker'),
+  btnCloseGif: document.getElementById('btn-close-gif'),
+  gifSearchForm: document.getElementById('gif-search-form'),
+  gifSearchInput: document.getElementById('gif-search-input'),
+  gifPickerStatus: document.getElementById('gif-picker-status'),
+  gifResults: document.getElementById('gif-results'),
+  attentionToast: document.getElementById('attention-toast'),
+  attentionToastText: document.getElementById('attention-toast-text'),
+  myPersonBadge: document.querySelector('.person-badge'),
+  peerPersonBadge: document.querySelector('.peer-person'),
 };
 
 const state = {
@@ -69,16 +89,145 @@ const state = {
   progressTimer: null,
   pendingMedia: null,
   pendingMediaName: '',
+  soloMode: false,
+  neutralMode: false,
+  notificationsEnabled: false,
+  unreadChatCount: 0,
+  hiddenMessageIds: new Set(),
+  attentionToastTimer: null,
+  audioContext: null,
 };
 
 const SESSION_STORAGE_KEY = 'encontro-jasmym-sessions-v1';
 const PROFILE_STORAGE_KEY = 'encontro-jasmym-profile-v1';
-const PROTOCOL_VERSION = 13;
+const UI_STORAGE_KEY = 'encontro-jasmym-ui-v14';
+const HIDDEN_CHAT_STORAGE_KEY = 'encontro-jasmym-hidden-chat-v14';
+const PROTOCOL_VERSION = 15;
 
 function readJson(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key)) ?? fallback; }
   catch { return fallback; }
 }
+
+function saveUiPreferences() {
+  try {
+    localStorage.setItem(UI_STORAGE_KEY, JSON.stringify({
+      neutralMode: state.neutralMode,
+      notificationsEnabled: state.notificationsEnabled,
+    }));
+  } catch {
+    // Preferências continuam válidas até a aba ser fechada.
+  }
+}
+
+function applyNeutralMode() {
+  document.body.classList.toggle('neutral-mode', state.neutralMode);
+  document.querySelectorAll('[data-neutral]').forEach((element) => {
+    if (!element.dataset.defaultHtml) element.dataset.defaultHtml = element.innerHTML;
+    element.innerHTML = state.neutralMode ? element.dataset.neutral : element.dataset.defaultHtml;
+  });
+  document.title = state.neutralMode ? 'Sala de filmes' : 'Encontro de Jasmym e Lívia';
+  if (els.btnNeutralMode) {
+    els.btnNeutralMode.classList.toggle('active', state.neutralMode);
+    els.btnNeutralMode.setAttribute('aria-pressed', String(state.neutralMode));
+    els.btnNeutralMode.textContent = state.neutralMode ? '◑ modo normal' : '◐ modo neutro';
+  }
+}
+
+function notificationIsSupported() {
+  return 'Notification' in window;
+}
+
+function updateNotificationButton() {
+  if (!els.btnNotifications) return;
+  const enabled = state.notificationsEnabled && notificationIsSupported() && Notification.permission === 'granted';
+  els.btnNotifications.textContent = enabled ? '🔔' : '🔕';
+  els.btnNotifications.classList.toggle('active', enabled);
+  els.btnNotifications.title = enabled ? 'Desativar notificações neste aparelho' : 'Ativar notificações neste aparelho';
+  els.btnNotifications.setAttribute('aria-label', els.btnNotifications.title);
+}
+
+function updateUnreadBadge() {
+  const count = Math.max(0, state.unreadChatCount);
+  els.chatUnreadBadge.textContent = count > 99 ? '99+' : String(count);
+  els.chatUnreadBadge.classList.toggle('hidden', count === 0);
+}
+
+function chatIsOpenOnThisScreen() {
+  return !matchMedia('(max-width: 720px)').matches || els.chatPanel.classList.contains('open');
+}
+
+function clearUnreadChat() {
+  state.unreadChatCount = 0;
+  updateUnreadBadge();
+}
+
+function maybeMarkChatUnread() {
+  if (!document.hidden && chatIsOpenOnThisScreen()) return;
+  state.unreadChatCount += 1;
+  updateUnreadBadge();
+}
+
+function showNativeNotification(title, body) {
+  if (!document.hidden || !state.notificationsEnabled || !notificationIsSupported() || Notification.permission !== 'granted') return;
+  try { new Notification(title, { body, silent: true }); } catch { /* navegador bloqueou */ }
+}
+
+function playAttentionSound() {
+  const AudioCtor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtor) return;
+  try {
+    const context = state.audioContext ||= new AudioCtor();
+    const resume = context.resume?.();
+    resume?.catch?.(() => {});
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(720, context.currentTime);
+    oscillator.frequency.exponentialRampToValueAtTime(980, context.currentTime + .13);
+    gain.gain.setValueAtTime(.0001, context.currentTime);
+    gain.gain.exponentialRampToValueAtTime(.07, context.currentTime + .02);
+    gain.gain.exponentialRampToValueAtTime(.0001, context.currentTime + .22);
+    oscillator.connect(gain).connect(context.destination);
+    oscillator.start();
+    oscillator.stop(context.currentTime + .23);
+  } catch {
+    // O alerta visual continua disponível quando áudio automático é bloqueado.
+  }
+}
+
+function showAttention(from = 'A outra pessoa') {
+  els.attentionToastText.textContent = `${from} chamou sua atenção.`;
+  els.attentionToast.classList.remove('hidden');
+  clearTimeout(state.attentionToastTimer);
+  state.attentionToastTimer = setTimeout(() => els.attentionToast.classList.add('hidden'), 4200);
+  navigator.vibrate?.([70, 40, 120]);
+  playAttentionSound();
+  showNativeNotification('Chamando você', `${from} chamou sua atenção na sala.`);
+}
+
+function loadHiddenMessagesForRoom() {
+  const saved = readJson(HIDDEN_CHAT_STORAGE_KEY, {});
+  state.hiddenMessageIds = new Set(Array.isArray(saved[state.roomCode]) ? saved[state.roomCode] : []);
+}
+
+function saveHiddenMessagesForRoom() {
+  if (!state.roomCode) return;
+  try {
+    const saved = readJson(HIDDEN_CHAT_STORAGE_KEY, {});
+    saved[state.roomCode] = [...state.hiddenMessageIds].slice(-300);
+    localStorage.setItem(HIDDEN_CHAT_STORAGE_KEY, JSON.stringify(saved));
+  } catch {
+    // Ocultar mensagens ainda vale durante a sessão atual.
+  }
+}
+
+const savedUiPreferences = readJson(UI_STORAGE_KEY, {});
+state.neutralMode = Boolean(savedUiPreferences.neutralMode);
+state.notificationsEnabled = Boolean(savedUiPreferences.notificationsEnabled);
+applyNeutralMode();
+updateNotificationButton();
+updateUnreadBadge();
 
 function readSessions() { return readJson(SESSION_STORAGE_KEY, {}); }
 
@@ -237,7 +386,7 @@ els.btnCreateRoom.addEventListener('click', async () => {
   state.myName = name;
   try {
     const client = await ensureConnected();
-    client.send({ type: 'CREATE_ROOM', name, avatar: state.avatar, protocolVersion: PROTOCOL_VERSION });
+    client.send({ type: 'CREATE_ROOM', name, avatar: state.avatar, soloMode: state.soloMode, protocolVersion: PROTOCOL_VERSION });
   } catch (error) {
     showLandingError(error.message || 'Não foi possível conectar ao servidor.');
   }
@@ -256,6 +405,7 @@ els.btnJoinRoom.addEventListener('click', async () => {
       type: 'JOIN_ROOM',
       name,
       avatar: state.avatar,
+      soloMode: state.soloMode,
       roomCode,
       reconnectToken: getReconnectToken(roomCode),
       protocolVersion: PROTOCOL_VERSION,
@@ -270,10 +420,16 @@ function attachRoomListeners(client) {
 
   const entered = (message) => {
     if (!activeClient()) return;
+    const enteringAnotherRoom = state.roomCode !== message.roomCode;
     state.roomCode = message.roomCode;
     state.participantId = message.participantId;
     state.reconnectToken = message.reconnectToken || getReconnectToken(message.roomCode);
     state.reconnectAttempts = 0;
+    loadHiddenMessagesForRoom();
+    if (enteringAnotherRoom) {
+      els.chatMessages.replaceChildren();
+      showChatWelcomeState();
+    }
     state.sync?.replaceConnection(client);
     saveRoomSession(state.roomCode, state.reconnectToken, state.participantId);
     enterRoomScreen();
@@ -309,13 +465,39 @@ function attachRoomListeners(client) {
     if (participants) updateParticipants(participants);
     addSystemMessage('A outra pessoa saiu. O vídeo continua neste mesmo tempo.');
   });
+  client.on('CHAT_HISTORY', (message) => {
+    if (!activeClient() || (message.roomCode && message.roomCode !== state.roomCode)) return;
+    renderChatHistory(message.messages);
+  });
   client.on('CHAT_MESSAGE', (message) => {
     if (!activeClient()) return;
     const sender = state.participants.find((person) => person.id === message.participantId);
-    addChatMessage(message.from, message.text, false, {
+    const mine = message.participantId === state.participantId;
+    const row = addChatMessage(message.from, message.text, mine, {
+      id: message.id,
+      participantId: message.participantId,
       media: message.media,
       avatar: message.avatar || sender?.avatar || null,
     });
+    if (!mine && row) {
+      maybeMarkChatUnread();
+      showNativeNotification('Nova mensagem', `${message.from || 'A outra pessoa'} enviou uma mensagem.`);
+    }
+  });
+  client.on('CHAT_DELETE', ({ messageId }) => {
+    if (!activeClient()) return;
+    removeChatMessage(messageId);
+  });
+  client.on('ATTENTION_PING', ({ from }) => {
+    if (!activeClient()) return;
+    showAttention(from || 'A outra pessoa');
+  });
+  client.on('SOLO_MODE', ({ participantId, active, from, participants }) => {
+    if (!activeClient()) return;
+    if (participants) updateParticipants(participants);
+    if (participantId !== state.participantId) {
+      addSystemMessage(active ? `${from || 'A outra pessoa'} entrou no modo solo.` : `${from || 'A outra pessoa'} voltou a assistir em conjunto.`);
+    }
   });
   client.on('ROOM_FULL', ({ message }) => {
     if (!activeClient()) return;
@@ -348,22 +530,26 @@ function updateParticipants(participants = []) {
   if (me) {
     els.myNameDisplay.textContent = me.name;
     setAvatar(els.myAvatar, me.avatar || state.avatar);
+    els.myPersonBadge?.classList.toggle('solo', Boolean(me.soloMode));
   }
   if (peer) {
     els.peerNameDisplay.textContent = peer.name;
     setAvatar(els.peerAvatar, peer.avatar, '❀');
     els.peerAvatar.classList.remove('waiting');
-    els.peerStatus.textContent = `${peer.name} está aqui com você`;
+    els.peerPersonBadge?.classList.toggle('solo', Boolean(peer.soloMode));
+    els.peerStatus.textContent = peer.soloMode ? `${peer.name} está em modo solo` : `${peer.name} está aqui com você`;
   } else {
     els.peerNameDisplay.textContent = 'esperando…';
     setAvatar(els.peerAvatar, null, '❀');
     els.peerAvatar.classList.add('waiting');
+    els.peerPersonBadge?.classList.remove('solo');
     els.peerStatus.textContent = 'esperando a outra pessoa entrar…';
   }
 }
 
 function handleRoomState(message, force = false) {
   if (Array.isArray(message.participants)) updateParticipants(message.participants);
+  if (state.soloMode) return;
   const videoState = message.videoState || (message.url ? message : null);
   if (!videoState?.url) return;
   if (!videoState.position && Number.isFinite(videoState.time)) videoState.position = videoState.time;
@@ -376,7 +562,22 @@ function handleRoomState(message, force = false) {
   }
 }
 
-async function loadVideo(videoType, url, initialState) {
+function updateSoloModeButton() {
+  els.btnSoloMode.classList.toggle('active', state.soloMode);
+  els.btnSoloMode.title = state.soloMode ? 'Voltar a assistir junto' : 'Assistir em modo solo neste aparelho';
+  els.btnSoloMode.setAttribute('aria-label', els.btnSoloMode.title);
+}
+
+function updatePlayerUtilityButtons() {
+  const nativeVideo = state.currentVideoType === 'html5' && state.player?.video;
+  els.btnPip.disabled = !nativeVideo || !document.pictureInPictureEnabled;
+  els.btnPip.title = els.btnPip.disabled
+    ? 'Picture in Picture disponível para MP4 e WebM neste navegador'
+    : 'Abrir Picture in Picture';
+  updateSoloModeButton();
+}
+
+async function loadVideo(videoType, url, initialState, { solo = false } = {}) {
   state.pendingVideoState = initialState || state.pendingVideoState;
   if (state.loadingVideoUrl === url) return;
   const loadId = ++state.playerLoadId;
@@ -406,6 +607,16 @@ async function loadVideo(videoType, url, initialState) {
   state.currentVideoUrl = url;
   state.currentVideoType = videoType;
   state.loadingVideoUrl = null;
+  updatePlayerUtilityButtons();
+
+  if (solo) {
+    state.pendingVideoState = null;
+    showResumePrompt(false);
+    startProgressLoop();
+    setConnectionStatus('modo solo neste aparelho', 'warning');
+    return;
+  }
+
   state.sync = new SyncController({
     player,
     wsClient: state.wsClient,
@@ -418,6 +629,7 @@ async function loadVideo(videoType, url, initialState) {
   state.pendingVideoState = null;
   state.sync.startPolling();
   startProgressLoop();
+  updateSoloModeButton();
   setConnectionStatus('sincronizado com a sala', 'ok');
 }
 
@@ -431,7 +643,7 @@ function showResumePrompt(show) {
   els.resumeBanner.classList.toggle('hidden', !show);
   els.btnPlayPause.classList.toggle('resume-needed', show);
   if (show) setConnectionStatus('toque para liberar o vídeo neste aparelho', 'warning');
-  else if (state.player) setConnectionStatus('sincronizado com a sala', 'ok');
+  else if (state.player) setConnectionStatus(state.soloMode ? 'modo solo neste aparelho' : 'sincronizado com a sala', state.soloMode ? 'warning' : 'ok');
 }
 
 function setConnectionStatus(text, kind = 'ok') {
@@ -459,6 +671,7 @@ async function reconnectRoom() {
       roomCode: state.roomCode,
       name: state.myName,
       avatar: state.avatar,
+      soloMode: state.soloMode,
       reconnectToken: state.reconnectToken || getReconnectToken(state.roomCode),
       protocolVersion: PROTOCOL_VERSION,
     });
@@ -475,6 +688,11 @@ els.videoForm.addEventListener('submit', (event) => {
   if (videoType === 'html5' && !/\.(mp4|webm)(\?.*)?$/i.test(url)) {
     return showVideoError('Esse link não parece ser um MP4 ou WebM direto.');
   }
+  if (state.soloMode) {
+    loadVideo(videoType, url, null, { solo: true });
+    els.videoUrlInput.value = '';
+    return;
+  }
   state.wsClient?.send({
     type: 'CHANGE_VIDEO',
     videoType,
@@ -486,6 +704,87 @@ els.videoForm.addEventListener('submit', (event) => {
   els.videoUrlInput.value = '';
 });
 
+function setSoloMode(active) {
+  if (!state.player) return showChatError('Escolha um vídeo antes de usar o modo solo.');
+  if (active === state.soloMode) return;
+
+  if (active) {
+    const position = state.sync?.expectedPosition();
+    const shouldPlay = state.sync?.expectsPlayback();
+    if (Number.isFinite(position)) state.player.seekTo(position);
+    state.sync?.destroy();
+    state.sync = null;
+    state.soloMode = true;
+    if (shouldPlay) state.player.play();
+    state.wsClient?.send({ type: 'SOLO_MODE', active: true });
+    const me = state.participants.find((person) => person.id === state.participantId);
+    if (me) {
+      me.soloMode = true;
+      updateParticipants(state.participants);
+    }
+    updateSoloModeButton();
+    setConnectionStatus('modo solo neste aparelho', 'warning');
+    return;
+  }
+
+  state.soloMode = false;
+  state.player.pause();
+  state.sync?.destroy();
+  state.sync = null;
+  // Força a troca de volta para a fonte e o relógio oficiais da sala, mesmo
+  // quando a pessoa escolheu o mesmo vídeo durante o modo solo.
+  state.currentVideoUrl = null;
+  state.currentVideoType = null;
+  state.pendingVideoState = null;
+  state.wsClient?.send({ type: 'SOLO_MODE', active: false });
+  const me = state.participants.find((person) => person.id === state.participantId);
+  if (me) {
+    me.soloMode = false;
+    updateParticipants(state.participants);
+  }
+  state.wsClient?.send({ type: 'REQUEST_STATE' }, { skipIfBusy: true });
+  updateSoloModeButton();
+  setConnectionStatus('voltando para a reprodução conjunta…', 'working');
+}
+
+function updateFullscreenButton() {
+  const fullscreen = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+  els.btnFullscreen.textContent = fullscreen ? '⛶' : '⛶';
+  els.btnFullscreen.title = fullscreen ? 'Sair da tela cheia' : 'Tela cheia';
+  els.btnFullscreen.setAttribute('aria-label', els.btnFullscreen.title);
+}
+
+async function toggleFullscreen() {
+  try {
+    if (document.fullscreenElement || document.webkitFullscreenElement) {
+      if (document.exitFullscreen) await document.exitFullscreen();
+      else document.webkitExitFullscreen?.();
+      return;
+    }
+    if (els.videoWrapper.requestFullscreen) {
+      await els.videoWrapper.requestFullscreen();
+      return;
+    }
+    // Safari em alguns iPhones usa apenas o fullscreen nativo do elemento de vídeo.
+    state.player?.video?.webkitEnterFullscreen?.();
+  } catch {
+    showChatError('A tela cheia não está disponível neste navegador.');
+  }
+}
+
+async function togglePictureInPicture() {
+  const video = state.currentVideoType === 'html5' ? state.player?.video : null;
+  if (!video || !document.pictureInPictureEnabled) {
+    return showChatError('Picture in Picture funciona com vídeos MP4 ou WebM neste navegador.');
+  }
+  try {
+    if (document.pictureInPictureElement) await document.exitPictureInPicture();
+    else await video.requestPictureInPicture();
+  } catch {
+    showChatError('Não foi possível abrir o Picture in Picture agora.');
+  }
+}
+
 function updatePlayPauseIcon() {
   if (!state.player) return;
   const playing = state.player.isPlaying();
@@ -495,28 +794,43 @@ function updatePlayPauseIcon() {
 }
 
 function togglePlayback() {
-  if (!state.player || !state.sync) return;
+  if (!state.player) return;
+  if (state.soloMode) {
+    if (state.player.isPlaying()) state.player.pause();
+    else state.player.play();
+    setTimeout(updatePlayPauseIcon, 150);
+    return;
+  }
+  if (!state.sync) return;
   if (state.player.isPlaying()) state.sync.localPause();
   else state.sync.localPlay();
   setTimeout(updatePlayPauseIcon, 150);
 }
 
 els.btnPlayPause.addEventListener('click', togglePlayback);
+els.btnSoloMode.addEventListener('click', () => setSoloMode(!state.soloMode));
+els.btnFullscreen.addEventListener('click', toggleFullscreen);
+els.btnPip.addEventListener('click', togglePictureInPicture);
+document.addEventListener('fullscreenchange', updateFullscreenButton);
+document.addEventListener('webkitfullscreenchange', updateFullscreenButton);
 els.resumeBanner.addEventListener('click', () => {
   state.sync?.localPlay();
   setTimeout(updatePlayPauseIcon, 200);
 });
 els.btnBack10.addEventListener('click', () => {
+  if (state.soloMode && state.player) return state.player.seekTo(Math.max(0, state.player.getCurrentTime() - 10));
   if (!state.sync) return;
   state.sync.localSeek(Math.max(0, state.sync.expectedPosition() - 10));
 });
 els.btnFwd10.addEventListener('click', () => {
+  if (state.soloMode && state.player) return state.player.seekTo(state.player.getCurrentTime() + 10);
   if (!state.sync) return;
   state.sync.localSeek(state.sync.expectedPosition() + 10);
 });
 els.seekBar.addEventListener('input', () => { state.seekBarBeingDragged = true; });
 els.seekBar.addEventListener('change', () => {
-  state.sync?.localSeek(Number(els.seekBar.value));
+  if (state.soloMode) state.player?.seekTo(Number(els.seekBar.value));
+  else state.sync?.localSeek(Number(els.seekBar.value));
   state.seekBarBeingDragged = false;
 });
 
@@ -566,10 +880,123 @@ function createAvatarElement(avatar, fallback = '✿') {
   return element;
 }
 
-function addChatMessage(author, text, mine, { media = null, avatar = null } = {}) {
+function removeChatEmptyStates() {
+  els.chatMessages.querySelectorAll('.chat-welcome, .chat-empty-local').forEach((element) => element.remove());
+}
+
+function showChatWelcomeState() {
+  if (els.chatMessages.querySelector('.chat-row, .chat-welcome, .chat-empty-local')) return;
+  const element = document.createElement('div');
+  element.className = 'chat-welcome';
+  const icon = document.createElement('span');
+  icon.textContent = '❀';
+  const text = document.createElement('p');
+  text.textContent = 'Mensagens, fotos e GIFs aparecem aqui.';
+  element.append(icon, text);
+  els.chatMessages.appendChild(element);
+}
+
+function showChatEmptyState() {
+  if (els.chatMessages.querySelector('.chat-row') || els.chatMessages.querySelector('.chat-empty-local')) return;
   els.chatMessages.querySelector('.chat-welcome')?.remove();
+  const element = document.createElement('div');
+  element.className = 'chat-empty-local';
+  element.textContent = 'As mensagens foram ocultadas somente nesta tela.';
+  els.chatMessages.appendChild(element);
+}
+
+function findChatMessageRow(messageId) {
+  if (!messageId) return null;
+  return [...els.chatMessages.querySelectorAll('.chat-row[data-message-id]')]
+    .find((row) => row.dataset.messageId === messageId) || null;
+}
+
+function removeChatMessage(messageId) {
+  if (!messageId) return;
+  findChatMessageRow(messageId)?.remove();
+  if (!els.chatMessages.querySelector('.chat-row') && !els.chatMessages.querySelector('.chat-empty-local')) {
+    showChatWelcomeState();
+  }
+}
+
+function renderChatHistory(messages) {
+  const history = Array.isArray(messages) ? messages : [];
+  els.chatMessages.replaceChildren();
+  let visibleMessages = 0;
+  for (const message of history) {
+    if (!message || typeof message !== 'object') continue;
+    const sender = state.participants.find((person) => person.id === message.participantId);
+    const row = addChatMessage(message.from, message.text, message.participantId === state.participantId, {
+      id: message.id,
+      participantId: message.participantId,
+      media: message.media,
+      avatar: message.avatar || sender?.avatar || null,
+    });
+    if (row) visibleMessages += 1;
+  }
+  if (!visibleMessages) {
+    if (history.length) showChatEmptyState();
+    else showChatWelcomeState();
+  }
+}
+
+function deleteChatMessageForMe(messageId, row) {
+  if (messageId) {
+    state.hiddenMessageIds.add(messageId);
+    saveHiddenMessagesForRoom();
+  }
+  row?.remove();
+  showChatEmptyState();
+}
+
+function openChatMessageMenu(trigger, { messageId, mine, row }) {
+  document.querySelectorAll('.chat-message-menu-panel').forEach((element) => element.remove());
+  const panel = document.createElement('div');
+  panel.className = 'chat-message-menu-panel';
+
+  const addAction = (label, callback, danger = false) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = label;
+    if (danger) button.classList.add('danger');
+    button.addEventListener('click', () => {
+      panel.remove();
+      callback();
+    });
+    panel.appendChild(button);
+  };
+
+  addAction('Apagar para mim', () => deleteChatMessageForMe(messageId, row));
+  if (mine) {
+    addAction('Apagar para todos', () => {
+      const sent = state.wsClient?.send({ type: 'CHAT_DELETE', messageId });
+      if (!sent) showChatError('A conexão caiu antes de apagar a mensagem.');
+    }, true);
+  }
+
+  const rect = trigger.getBoundingClientRect();
+  document.body.appendChild(panel);
+  const panelWidth = panel.getBoundingClientRect().width;
+  panel.style.top = `${Math.max(8, rect.bottom + 4)}px`;
+  panel.style.left = `${Math.max(8, Math.min(innerWidth - panelWidth - 8, rect.right - panelWidth))}px`;
+  const dismiss = (event) => {
+    if (panel.contains(event.target) || event.target === trigger) return;
+    panel.remove();
+    document.removeEventListener('pointerdown', dismiss, true);
+  };
+  setTimeout(() => document.addEventListener('pointerdown', dismiss, true), 0);
+}
+
+function addChatMessage(author, text, mine, { id = null, participantId = null, media = null, avatar = null } = {}) {
+  if (id) {
+    const existing = findChatMessageRow(id);
+    if (existing) return existing;
+    if (state.hiddenMessageIds.has(id)) return null;
+  }
+  removeChatEmptyStates();
   const row = document.createElement('div');
   row.className = `chat-row ${mine ? 'mine' : 'theirs'}`;
+  if (id) row.dataset.messageId = id;
   row.appendChild(createAvatarElement(avatar, mine ? '✿' : '❀'));
 
   const bubble = document.createElement('div');
@@ -591,11 +1018,26 @@ function addChatMessage(author, text, mine, { media = null, avatar = null } = {}
     bubble.appendChild(paragraph);
   }
   row.appendChild(bubble);
+  if (id) {
+    const actions = document.createElement('div');
+    actions.className = 'chat-message-actions';
+    const menuButton = document.createElement('button');
+    menuButton.type = 'button';
+    menuButton.className = 'chat-message-menu';
+    menuButton.textContent = '⋯';
+    menuButton.title = 'Opções da mensagem';
+    menuButton.setAttribute('aria-label', 'Opções da mensagem');
+    menuButton.addEventListener('click', () => openChatMessageMenu(menuButton, { messageId: id, mine, row }));
+    actions.appendChild(menuButton);
+    row.appendChild(actions);
+  }
   els.chatMessages.appendChild(row);
   els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+  return row;
 }
 
 function addSystemMessage(text) {
+  removeChatEmptyStates();
   const element = document.createElement('div');
   element.className = 'chat-system';
   element.textContent = `❦ ${text}`;
@@ -603,15 +1045,20 @@ function addSystemMessage(text) {
   els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
 }
 
+function setPendingMedia(media, label) {
+  state.pendingMedia = media;
+  state.pendingMediaName = label;
+  els.mediaPreview.src = media;
+  els.mediaPreviewName.textContent = label;
+  els.mediaPreviewBar.classList.remove('hidden');
+}
+
 els.chatMediaInput.addEventListener('change', async () => {
   const file = els.chatMediaInput.files?.[0];
   if (!file) return;
   try {
-    state.pendingMedia = await prepareImage(file, 'chat');
-    state.pendingMediaName = file.name;
-    els.mediaPreview.src = state.pendingMedia;
-    els.mediaPreviewName.textContent = file.type === 'image/gif' ? 'GIF pronto' : file.name;
-    els.mediaPreviewBar.classList.remove('hidden');
+    const media = await prepareImage(file, 'chat');
+    setPendingMedia(media, file.type === 'image/gif' ? 'GIF pronto' : file.name);
   } catch (error) {
     showChatError(error.message);
   } finally {
@@ -632,15 +1079,127 @@ els.chatForm.addEventListener('submit', (event) => {
   const text = els.chatInput.value.trim();
   const media = state.pendingMedia;
   if (!text && !media) return;
-  const sent = state.wsClient?.send({ type: 'CHAT_MESSAGE', text, media });
+  const messageId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const sent = state.wsClient?.send({ type: 'CHAT_MESSAGE', messageId, text, media });
   if (!sent) return showChatError('A conexão caiu antes de enviar. Tente novamente.');
-  addChatMessage(state.myName, text, true, { media, avatar: state.avatar });
+  addChatMessage(state.myName, text, true, { id: messageId, participantId: state.participantId, media, avatar: state.avatar });
   els.chatInput.value = '';
   clearPendingMedia();
 });
 
-els.btnToggleChat.addEventListener('click', () => els.chatPanel.classList.add('open'));
+function openChat() {
+  els.chatPanel.classList.add('open');
+  clearUnreadChat();
+  setTimeout(() => els.chatInput.focus(), 120);
+}
+
+function closeChat() { els.chatPanel.classList.remove('open'); }
+
+els.btnToggleChat.addEventListener('click', openChat);
 els.btnCloseChat.addEventListener('click', () => els.chatPanel.classList.remove('open'));
+
+els.btnClearChatForMe.addEventListener('click', () => {
+  if (!confirm('Apagar todas as mensagens somente desta tela? A outra pessoa continuará vendo as mensagens.')) return;
+  els.chatMessages.querySelectorAll('.chat-row[data-message-id]').forEach((row) => {
+    if (row.dataset.messageId) state.hiddenMessageIds.add(row.dataset.messageId);
+  });
+  els.chatMessages.replaceChildren();
+  saveHiddenMessagesForRoom();
+  showChatEmptyState();
+});
+
+els.btnNotifications.addEventListener('click', async () => {
+  if (!notificationIsSupported()) return showChatError('Este navegador não oferece notificações.');
+  if (Notification.permission === 'granted') {
+    state.notificationsEnabled = !state.notificationsEnabled;
+  } else {
+    const permission = await Notification.requestPermission();
+    state.notificationsEnabled = permission === 'granted';
+    if (!state.notificationsEnabled) showChatError('As notificações não foram autorizadas neste aparelho.');
+  }
+  saveUiPreferences();
+  updateNotificationButton();
+});
+
+els.btnAttentionPing.addEventListener('click', () => {
+  const sent = state.wsClient?.send({ type: 'ATTENTION_PING' });
+  if (!sent) showChatError('A conexão caiu antes de enviar o aviso.');
+});
+
+els.btnNeutralMode.addEventListener('click', () => {
+  state.neutralMode = !state.neutralMode;
+  saveUiPreferences();
+  applyNeutralMode();
+});
+
+function openGifPicker() {
+  els.gifPicker.classList.remove('hidden');
+  els.gifPickerStatus.textContent = CONFIG.GIPHY_API_KEY?.trim()
+    ? 'Pesquise uma reação para escolher um GIF.'
+    : 'A busca de GIFs precisa de uma chave do GIPHY em config.js.';
+  setTimeout(() => els.gifSearchInput.focus(), 0);
+}
+
+function closeGifPicker() { els.gifPicker.classList.add('hidden'); }
+
+function renderGifResults(gifs) {
+  els.gifResults.replaceChildren();
+  for (const gif of gifs) {
+    const media = gif.images?.fixed_width_small?.url || gif.images?.fixed_width?.url || gif.images?.original?.url;
+    if (!media || !media.startsWith('https://')) continue;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'gif-result';
+    button.title = 'Enviar este GIF';
+    const image = document.createElement('img');
+    image.src = media;
+    image.alt = gif.title || 'GIF';
+    image.loading = 'lazy';
+    button.appendChild(image);
+    button.addEventListener('click', () => {
+      setPendingMedia(media, 'GIF da web');
+      closeGifPicker();
+      els.chatInput.focus();
+    });
+    els.gifResults.appendChild(button);
+  }
+  if (!els.gifResults.childElementCount) els.gifPickerStatus.textContent = 'Nenhum GIF seguro foi encontrado para essa busca.';
+}
+
+async function searchGifs() {
+  const query = els.gifSearchInput.value.trim();
+  if (!query) return;
+  const apiKey = CONFIG.GIPHY_API_KEY?.trim();
+  if (!apiKey) return openGifPicker();
+  els.gifPickerStatus.textContent = 'Pesquisando GIFs…';
+  els.gifResults.replaceChildren();
+  try {
+    const params = new URLSearchParams({
+      api_key: apiKey,
+      q: query,
+      limit: String(Math.min(25, Math.max(1, CONFIG.GIPHY_LIMIT || 18))),
+      rating: CONFIG.GIPHY_RATING || 'g',
+      lang: 'pt',
+      bundle: 'messaging_non_clips',
+    });
+    const response = await fetch(`https://api.giphy.com/v1/gifs/search?${params}`);
+    if (!response.ok) throw new Error('A busca de GIFs falhou.');
+    const payload = await response.json();
+    const gifs = Array.isArray(payload.data) ? payload.data : [];
+    els.gifPickerStatus.textContent = gifs.length ? 'Toque em um GIF para anexá-lo à mensagem.' : 'Nenhum GIF foi encontrado.';
+    renderGifResults(gifs);
+  } catch {
+    els.gifPickerStatus.textContent = 'Não foi possível pesquisar GIFs agora. Confira a chave e a conexão.';
+  }
+}
+
+els.btnOpenGif.addEventListener('click', openGifPicker);
+els.btnCloseGif.addEventListener('click', closeGifPicker);
+els.gifPicker.addEventListener('click', (event) => { if (event.target === els.gifPicker) closeGifPicker(); });
+els.gifSearchForm.addEventListener('submit', (event) => { event.preventDefault(); searchGifs(); });
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !els.gifPicker.classList.contains('hidden')) closeGifPicker();
+});
 
 (function setupChatResize() {
   const handle = document.getElementById('chat-resize-handle');
@@ -676,6 +1235,7 @@ els.btnCloseChat.addEventListener('click', () => els.chatPanel.classList.remove(
 })();
 
 document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && chatIsOpenOnThisScreen()) clearUnreadChat();
   if (!document.hidden && state.roomCode) {
     if (state.wsClient?.isOpen()) {
       state.wsClient.send({ type: 'REQUEST_STATE' }, { skipIfBusy: true });
@@ -684,6 +1244,8 @@ document.addEventListener('visibilitychange', () => {
     else scheduleReconnect();
   }
 });
+
+updateFullscreenButton();
 
 window.addEventListener('beforeunload', () => {
   state.closing = true;

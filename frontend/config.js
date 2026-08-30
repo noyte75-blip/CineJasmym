@@ -23,4 +23,12 @@ const CONFIG = {
   PAUSED_STATE_POLL_INTERVAL_MS: 30000,
   BACKGROUND_STATE_POLL_INTERVAL_MS: 30000,
   TIME_SYNC_INTERVAL_MS: 30000,
+
+  // GIFs pesquisáveis no chat (GIPHY). Crie uma chave gratuita em
+  // developers.giphy.com e cole aqui antes do deploy. A chave fica no
+  // frontend porque a própria GIPHY exige que a busca seja feita pelo cliente.
+  // Deixar vazio não afeta o restante do site; apenas desativa a busca de GIFs.
+  GIPHY_API_KEY: '',
+  GIPHY_RATING: 'g',
+  GIPHY_LIMIT: 18,
 };

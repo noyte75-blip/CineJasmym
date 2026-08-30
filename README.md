@@ -1,8 +1,35 @@
-# Encontro de Jasmym e Lívia — versão 13
+# Encontro de Jasmym e Lívia — versão 14.1
 
 Watch Together simples para exatamente duas pessoas, com vídeo sincronizado,
 chat, fotos, GIFs e foto de perfil. O tema visual usa jasmim, lírio, tons de
 rosa, lilás e verde.
+
+## Novidades da V14
+
+- Chat aprimorado no celular: gaveta maior, segura acima do teclado, contador
+  de mensagens não lidas e botões maiores.
+- Sininho de notificações por aparelho e botão ✦ para chamar a atenção da outra
+  pessoa com aviso visual, som curto e vibração quando o navegador permitir.
+- Pesquisa de GIFs da web pelo GIPHY, com classificação `G` e envio como mídia
+  externa leve; fotos e GIFs da galeria continuam funcionando como antes.
+- Tela cheia para o player e Picture in Picture nativo para fontes MP4/WebM.
+- Modo neutro local: altera apenas a aparência daquele aparelho, sem mudar a
+  sala da outra pessoa.
+- Mensagens podem ser apagadas só para um aparelho ou, quando foram enviadas
+  por você, para as duas telas conectadas.
+- Modo solo local: a pessoa pode assistir e trocar de vídeo sem mexer no tempo
+  oficial; a outra vê apenas o indicador de modo solo.
+
+## Correção da V14.1 — histórico do chat
+
+- Ao sair, atualizar a página ou reconectar na mesma sala, o chat volta com as
+  mensagens anteriores automaticamente.
+- O backend guarda até as últimas 100 mensagens da sala, com um limite total de
+  aproximadamente 6 MB para fotos e GIFs não deixarem o servidor pesado.
+- “Apagar para todos” também remove a mensagem do histórico; “apagar para mim”
+  continua sendo uma escolha local daquele aparelho.
+- As salas e o histórico são gravados em `backend/data/rooms.json` de forma
+  segura. Assim, uma reinicialização comum do processo não perde a conversa.
 
 ## O que mudou na sincronização
 
@@ -40,9 +67,18 @@ rosa, lilás e verde.
 - GIFs mantêm a animação e têm limite de 350 KB no chat e 100 KB no perfil.
 - Mensagens de texto não carregam mais uma cópia da foto de perfil; usam o
   participante que já está no estado da sala.
-- As mídias passam pelo WebSocket somente para a outra pessoa conectada.
-- O servidor não cria arquivos e não mantém histórico de chat.
+- As mídias passam pelo WebSocket somente para a outra pessoa conectada e, se
+  forem parte do histórico, ficam temporariamente no arquivo da sala para
+  poderem reaparecer ao voltar.
+- O arquivo do histórico não entra no Git (`backend/data/` está ignorado).
 - Imagens aceitas: JPG, PNG, WebP e GIF.
+
+### GIFs pesquisáveis
+
+Para habilitar a busca, crie uma chave para o site no GIPHY e preencha
+`GIPHY_API_KEY` em `frontend/config.js`. A busca é feita diretamente pelo
+navegador, com filtro `G`; sem a chave, somente o seletor de GIFs da web fica
+desativado — o restante da V14 funciona normalmente.
 
 ## Estrutura
 
@@ -55,7 +91,7 @@ netlify.toml configuração do frontend
 
 ## Atualização obrigatória — não misture versões
 
-Para a versão 13 funcionar, substitua as duas pastas completas, nesta ordem:
+Para a versão 14.1 funcionar, substitua as duas pastas completas, nesta ordem:
 
 1. Substitua a pasta `backend/` no repositório usado pelo Render.
 2. Espere o deploy terminar.
@@ -65,12 +101,18 @@ Para a versão 13 funcionar, substitua as duas pastas completas, nesta ordem:
 3. Abra `https://SEU-BACKEND.onrender.com/health` e confirme:
 
    ```json
-   { "protocolVersion": 13 }
+   { "protocolVersion": 15 }
    ```
 
 4. Só depois substitua a pasta `frontend/` inteira no projeto da Netlify.
-5. Abra o código-fonte do site e confirme que os scripts terminam em `?v=13`.
-6. Crie uma sala nova. O reinício do Render limpa as salas em memória.
+5. Abra o código-fonte do site e confirme que os scripts terminam em `?v=14.1`.
+6. Crie uma sala, envie uma mensagem e recarregue a página: ela deve voltar no
+   chat automaticamente.
+
+O backend cria `data/rooms.json` sozinho. Caso o serviço de hospedagem substitua
+o disco a cada nova implantação, configure um disco persistente e defina
+`DATA_DIR` para esse caminho; sem isso, o histórico continua funcionando durante
+a sessão, nas reconexões e em reinicializações que preservem o mesmo disco.
 
 Se estiver usando Netlify Drop, envie **o conteúdo da pasta `frontend/`**. Se
 estiver usando GitHub, o `netlify.toml` da raiz já define `publish = "frontend"`.

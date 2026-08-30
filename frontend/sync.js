@@ -1,4 +1,4 @@
-// Sincronização v13: servidor autoritativo + relógio monotônico + ciclos
+// Sincronização v14: servidor autoritativo + relógio monotônico + ciclos
 // adaptativos. Quando o vídeo está pausado ou a aba está oculta, o trabalho e
 // as mensagens diminuem automaticamente.
 //
@@ -41,7 +41,7 @@ class SyncController {
     this.wsClient.send({
       type,
       ...fields,
-      protocolVersion: 13,
+      protocolVersion: 15,
       intent: 'user-control',
       commandId: this._commandId(),
     });

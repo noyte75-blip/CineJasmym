@@ -2,16 +2,22 @@
 
 const http = require('node:http');
 const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
 const { WebSocketServer, WebSocket } = require('ws');
 
 const PORT = readInteger(process.env.PORT, 8080, 1, 65535);
 const ROOM_TTL_MS = readInteger(process.env.ROOM_TTL_MS, 30 * 60_000, 60_000, 24 * 60 * 60_000);
 const MAX_MESSAGE_BYTES = readInteger(process.env.MAX_MESSAGE_BYTES, 1_500_000, 64 * 1024, 4 * 1024 * 1024);
+const CHAT_HISTORY_LIMIT = readInteger(process.env.CHAT_HISTORY_LIMIT, 100, 10, 300);
+const CHAT_HISTORY_MAX_CHARS = readInteger(process.env.CHAT_HISTORY_MAX_CHARS, 6 * 1024 * 1024, 128 * 1024, 20 * 1024 * 1024);
+const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, 'data');
+const ROOMS_FILE = path.join(DATA_DIR, 'rooms.json');
 const ALLOWED_ORIGINS = new Set(
   (process.env.ALLOWED_ORIGINS || '').split(',').map((value) => value.trim()).filter(Boolean),
 );
 
-const PROTOCOL_VERSION = 13;
+const PROTOCOL_VERSION = 15;
 // Pequeno tempo para os dois navegadores receberem o PLAY antes de o relógio
 // começar a avançar. Isso reduz a diferença inicial sem transmitir o vídeo.
 const PLAY_START_DELAY_MS = 700;
@@ -21,13 +27,18 @@ const CHAT_MAX_LENGTH = 600;
 const VIDEO_URL_MAX_LENGTH = 2048;
 const AVATAR_MAX_CHARS = 140_000;
 const MEDIA_MAX_CHARS = 560_000;
+const EXTERNAL_MEDIA_MAX_LENGTH = 2048;
+const ATTENTION_COOLDOWN_MS = 20_000;
 const CONTROL_TYPES = new Set(['PLAY', 'PAUSE', 'SEEK', 'CHANGE_VIDEO']);
 const IMAGE_DATA_URL = /^data:image\/(?:jpeg|png|webp|gif);base64,[a-zA-Z0-9+/=]+$/;
+const MESSAGE_ID = /^[a-zA-Z0-9_-]{8,120}$/;
 
 // O servidor é a única autoridade da linha do tempo. Clientes nunca atualizam
 // o relógio por heartbeat; eles apenas pedem um snapshot novo.
 const rooms = new Map();
 const rateLimits = new WeakMap();
+let roomsSaveTimer = null;
+let lastRoomsPersistedAt = 0;
 
 function readInteger(value, fallback, min, max) {
   const parsed = Number.parseInt(value, 10);
@@ -50,6 +61,32 @@ function normalizeTime(value) {
 function normalizeImageDataUrl(value, maxChars) {
   if (typeof value !== 'string' || value.length > maxChars || !IMAGE_DATA_URL.test(value)) return null;
   return value;
+}
+
+function normalizeGiphyMediaUrl(value) {
+  const raw = cleanText(value, EXTERNAL_MEDIA_MAX_LENGTH);
+  if (!raw) return null;
+  try {
+    const parsed = new URL(raw);
+    const host = parsed.hostname.toLowerCase();
+    const allowedHost = host === 'i.giphy.com' || /^media\d*\.giphy\.com$/.test(host);
+    const mediaPath = /^\/media\/[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9._-]+)?$/;
+    const imagePath = /^\/[a-zA-Z0-9_-]+\.(?:gif|webp)$/i;
+    if (parsed.protocol !== 'https:' || !allowedHost || !(mediaPath.test(parsed.pathname) || imagePath.test(parsed.pathname))) {
+      return null;
+    }
+    return parsed.href;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeChatMedia(value) {
+  return normalizeImageDataUrl(value, MEDIA_MAX_CHARS) || normalizeGiphyMediaUrl(value);
+}
+
+function cleanMessageId(value) {
+  return typeof value === 'string' && MESSAGE_ID.test(value) ? value : null;
 }
 
 function normalizeVideoUrl(value) {
@@ -89,6 +126,7 @@ function roomFor(ws) {
 
 function touch(room) {
   room.lastActivityAt = Date.now();
+  scheduleRoomsPersistence();
 }
 
 function projectedVideoState(room, now = Date.now()) {
@@ -115,6 +153,7 @@ function publicParticipants(room) {
       id: participant.id,
       name: participant.name,
       avatar: participant.avatar,
+      soloMode: Boolean(participant.soloMode),
       isLeader: participant.id === room.leaderId,
     }));
 }
@@ -180,6 +219,206 @@ function rememberCommand(room, commandId) {
   }
 }
 
+function validRoomCode(value) {
+  const code = cleanText(value, 6).toUpperCase();
+  return code.length === 6 && [...code].every((character) => ROOM_CHARS.includes(character)) ? code : null;
+}
+
+function normalizeStoredChatMessage(value) {
+  if (!value || typeof value !== 'object') return null;
+  const id = cleanMessageId(value.id);
+  const participantId = cleanMessageId(value.participantId);
+  const text = cleanText(value.text, CHAT_MAX_LENGTH);
+  const media = normalizeChatMedia(value.media);
+  if (!id || !participantId || (!text && !media)) return null;
+  return {
+    id,
+    text,
+    media,
+    from: normalizeName(value.from),
+    participantId,
+    sentAt: Number.isFinite(value.sentAt) ? Math.max(0, value.sentAt) : Date.now(),
+  };
+}
+
+function chatHistory(room) {
+  return [...room.chatMessages.values()].map(({ id, text, media, from, participantId, sentAt }) => ({
+    id,
+    text,
+    media,
+    from,
+    participantId,
+    sentAt,
+  }));
+}
+
+function chatHistoryCost(room) {
+  let total = 0;
+  for (const message of room.chatMessages.values()) {
+    total += message.id.length + message.participantId.length + message.from.length;
+    total += message.text.length + (message.media?.length || 0);
+  }
+  return total;
+}
+
+function trimChatHistory(room) {
+  while (room.chatMessages.size > CHAT_HISTORY_LIMIT || chatHistoryCost(room) > CHAT_HISTORY_MAX_CHARS) {
+    const oldestId = room.chatMessages.keys().next().value;
+    if (!oldestId) return;
+    room.chatMessages.delete(oldestId);
+  }
+}
+
+function rememberChatMessage(room, message) {
+  room.chatMessages.set(message.id, message);
+  trimChatHistory(room);
+}
+
+function sendChatHistory(ws, room) {
+  send(ws, {
+    type: 'CHAT_HISTORY',
+    roomCode: room.code,
+    messages: chatHistory(room),
+  });
+}
+
+function serializeRoom(room) {
+  const now = Date.now();
+  const videoState = projectedVideoState(room, now);
+  return {
+    code: room.code,
+    participants: [...room.participants.values()].map((participant) => ({
+      id: participant.id,
+      token: participant.token,
+      name: participant.name,
+      protocolVersion: participant.protocolVersion,
+    })),
+    videoState: {
+      videoType: videoState.videoType,
+      url: videoState.url,
+      playing: videoState.playing,
+      position: videoState.position,
+      revision: videoState.revision,
+    },
+    chatMessages: chatHistory(room),
+    createdAt: room.createdAt,
+    lastActivityAt: room.lastActivityAt,
+  };
+}
+
+function persistRooms() {
+  if (roomsSaveTimer) {
+    clearTimeout(roomsSaveTimer);
+    roomsSaveTimer = null;
+  }
+  let temporaryFile = null;
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    temporaryFile = `${ROOMS_FILE}.${process.pid}.tmp`;
+    const payload = JSON.stringify({ version: 1, savedAt: Date.now(), rooms: [...rooms.values()].map(serializeRoom) });
+    fs.writeFileSync(temporaryFile, payload, { encoding: 'utf8', mode: 0o600 });
+    fs.renameSync(temporaryFile, ROOMS_FILE);
+    lastRoomsPersistedAt = Date.now();
+  } catch (error) {
+    if (temporaryFile) {
+      try { fs.unlinkSync(temporaryFile); } catch { /* arquivo temporário já não existe */ }
+    }
+    console.error('Não foi possível salvar as salas:', error.message);
+  }
+}
+
+function scheduleRoomsPersistence() {
+  if (roomsSaveTimer) return;
+  const delay = Math.max(1_000, 30_000 - (Date.now() - lastRoomsPersistedAt));
+  roomsSaveTimer = setTimeout(() => {
+    roomsSaveTimer = null;
+    persistRooms();
+  }, delay);
+  roomsSaveTimer.unref();
+}
+
+function hydrateParticipant(value, now) {
+  if (!value || typeof value !== 'object') return null;
+  const id = cleanMessageId(value.id);
+  const token = typeof value.token === 'string' && /^[a-zA-Z0-9_-]{16,128}$/.test(value.token) ? value.token : null;
+  if (!id || !token) return null;
+  return {
+    id,
+    token,
+    name: normalizeName(value.name),
+    avatar: null,
+    protocolVersion: Number.isInteger(value.protocolVersion) ? value.protocolVersion : 0,
+    ws: null,
+    activeSince: null,
+    disconnectedAt: now,
+    soloMode: false,
+    lastAttentionAt: 0,
+  };
+}
+
+function hydrateRoom(value, now) {
+  if (!value || typeof value !== 'object') return null;
+  const code = validRoomCode(value.code);
+  const savedLastActivityAt = Number(value.lastActivityAt);
+  if (!code || !Number.isFinite(savedLastActivityAt) || now - savedLastActivityAt > ROOM_TTL_MS) return null;
+
+  const participants = new Map();
+  for (const rawParticipant of Array.isArray(value.participants) ? value.participants.slice(0, 2) : []) {
+    const participant = hydrateParticipant(rawParticipant, now);
+    if (participant && !participants.has(participant.id)) participants.set(participant.id, participant);
+  }
+  if (!participants.size) return null;
+
+  const rawVideoState = value.videoState && typeof value.videoState === 'object' ? value.videoState : {};
+  const url = normalizeVideoUrl(rawVideoState.url);
+  const videoState = {
+    videoType: url ? cleanText(rawVideoState.videoType, 30) || 'youtube' : null,
+    url,
+    playing: Boolean(url && rawVideoState.playing),
+    position: normalizeTime(rawVideoState.position) ?? 0,
+    changedAt: now,
+    revision: Number.isSafeInteger(rawVideoState.revision) && rawVideoState.revision >= 0 ? rawVideoState.revision : 0,
+  };
+  const room = {
+    code,
+    participants,
+    leaderId: null,
+    recentCommands: new Map(),
+    chatMessages: new Map(),
+    videoState,
+    createdAt: Number.isFinite(value.createdAt) ? value.createdAt : now,
+    lastActivityAt: savedLastActivityAt,
+  };
+  for (const rawMessage of Array.isArray(value.chatMessages) ? value.chatMessages : []) {
+    const message = normalizeStoredChatMessage(rawMessage);
+    if (message && !room.chatMessages.has(message.id)) room.chatMessages.set(message.id, message);
+  }
+  trimChatHistory(room);
+  return room;
+}
+
+function loadRooms() {
+  let stored;
+  try {
+    stored = JSON.parse(fs.readFileSync(ROOMS_FILE, 'utf8'));
+  } catch (error) {
+    if (error.code !== 'ENOENT') console.error('Não foi possível carregar as salas:', error.message);
+    return;
+  }
+  const candidates = Array.isArray(stored?.rooms) ? stored.rooms : [];
+  const now = Date.now();
+  let loaded = 0;
+  for (const candidate of candidates) {
+    const room = hydrateRoom(candidate, now);
+    if (room && !rooms.has(room.code)) {
+      rooms.set(room.code, room);
+      loaded += 1;
+    }
+  }
+  if (loaded !== candidates.length) persistRooms();
+  if (loaded) console.log(`${loaded} sala(s) e seus históricos restaurados.`);
+}
+
 function allowMessage(ws, bytes) {
   const now = Date.now();
   let limit = rateLimits.get(ws);
@@ -202,6 +441,8 @@ function makeParticipant(msg) {
     ws: null,
     activeSince: null,
     disconnectedAt: null,
+    soloMode: msg.soloMode === true,
+    lastAttentionAt: 0,
   };
 }
 
@@ -225,6 +466,7 @@ function handleCreateRoom(ws, msg) {
     participants: new Map([[participant.id, participant]]),
     leaderId: null,
     recentCommands: new Map(),
+    chatMessages: new Map(),
     videoState: {
       videoType: null,
       url: null,
@@ -238,11 +480,13 @@ function handleCreateRoom(ws, msg) {
   };
   rooms.set(roomCode, room);
   attachParticipant(ws, room, participant);
+  persistRooms();
   send(ws, {
     ...roomState(room, participant, 'ROOM_CREATED'),
     reconnectToken: participant.token,
     name: participant.name,
   });
+  sendChatHistory(ws, room);
 }
 
 function safeTokenMatch(participant, token) {
@@ -265,6 +509,7 @@ function handleJoinRoom(ws, msg) {
     participant.name = normalizeName(msg.name || participant.name);
     participant.avatar = normalizeImageDataUrl(msg.avatar, AVATAR_MAX_CHARS) || participant.avatar;
     participant.protocolVersion = Number.isInteger(msg.protocolVersion) ? msg.protocolVersion : participant.protocolVersion;
+    participant.soloMode = msg.soloMode === true;
   } else {
     if (activeCount(room) >= 2) return send(ws, { type: 'ROOM_FULL', message: 'A sala já tem duas pessoas.' });
     participant = makeParticipant(msg);
@@ -272,13 +517,20 @@ function handleJoinRoom(ws, msg) {
   }
 
   attachParticipant(ws, room, participant);
+  persistRooms();
   send(ws, {
     ...roomState(room, participant, 'JOINED'),
     reconnectToken: participant.token,
   });
+  sendChatHistory(ws, room);
   broadcast(room, {
     type: 'PEER_JOINED',
-    participant: { id: participant.id, name: participant.name, avatar: participant.avatar },
+    participant: {
+      id: participant.id,
+      name: participant.name,
+      avatar: participant.avatar,
+      soloMode: Boolean(participant.soloMode),
+    },
     participants: publicParticipants(room),
     leader: leaderInfo(room),
   }, ws);
@@ -346,20 +598,68 @@ function handleRoomMessage(ws, msg) {
     touch(room);
     return broadcastRoomState(room, true);
   }
-  if (msg.type === 'CHAT_MESSAGE') {
-    const text = cleanText(msg.text ?? msg.message, CHAT_MAX_LENGTH);
-    const media = normalizeImageDataUrl(msg.media, MEDIA_MAX_CHARS);
-    if (!text && !media) return fail(ws, 'INVALID_CHAT', 'A mensagem está vazia.');
+  if (msg.type === 'ATTENTION_PING') {
+    const now = Date.now();
+    const remaining = ATTENTION_COOLDOWN_MS - (now - participant.lastAttentionAt);
+    if (remaining > 0) {
+      return fail(ws, 'ATTENTION_COOLDOWN', `Espere ${Math.ceil(remaining / 1000)} segundos para chamar de novo.`);
+    }
+    participant.lastAttentionAt = now;
     touch(room);
     return broadcast(room, {
-      type: 'CHAT_MESSAGE',
-      id: crypto.randomUUID(),
+      type: 'ATTENTION_PING',
+      participantId: participant.id,
+      from: participant.name,
+      sentAt: now,
+    }, ws);
+  }
+  if (msg.type === 'SOLO_MODE') {
+    participant.soloMode = msg.active === true;
+    touch(room);
+    return broadcast(room, {
+      type: 'SOLO_MODE',
+      participantId: participant.id,
+      active: participant.soloMode,
+      from: participant.name,
+      participants: publicParticipants(room),
+    }, ws);
+  }
+  if (msg.type === 'CHAT_MESSAGE') {
+    const text = cleanText(msg.text ?? msg.message, CHAT_MAX_LENGTH);
+    const media = normalizeChatMedia(msg.media);
+    if (!text && !media) return fail(ws, 'INVALID_CHAT', 'A mensagem está vazia.');
+    const messageId = cleanMessageId(msg.messageId) || crypto.randomUUID();
+    if (room.chatMessages.has(messageId)) return fail(ws, 'DUPLICATE_CHAT', 'Essa mensagem já foi enviada.');
+    const chatMessage = {
+      id: messageId,
       text,
       media,
       from: participant.name,
       participantId: participant.id,
       sentAt: Date.now(),
+    };
+    rememberChatMessage(room, chatMessage);
+    touch(room);
+    persistRooms();
+    return broadcast(room, {
+      type: 'CHAT_MESSAGE',
+      ...chatMessage,
     }, ws);
+  }
+  if (msg.type === 'CHAT_DELETE') {
+    const messageId = cleanMessageId(msg.messageId);
+    if (!messageId) return fail(ws, 'INVALID_MESSAGE_ID', 'A mensagem não pôde ser identificada.');
+    const stored = room.chatMessages.get(messageId);
+    if (!stored) return fail(ws, 'MESSAGE_NOT_FOUND', 'Essa mensagem não está mais disponível para apagar.');
+    if (stored.participantId !== participant.id) return fail(ws, 'CHAT_DELETE_FORBIDDEN', 'Só quem enviou pode apagar para todos.');
+    room.chatMessages.delete(messageId);
+    touch(room);
+    persistRooms();
+    return broadcast(room, {
+      type: 'CHAT_DELETE',
+      messageId,
+      participantId: participant.id,
+    });
   }
 
   if (!CONTROL_TYPES.has(msg.type)) return;
@@ -375,6 +675,7 @@ function handleRoomMessage(ws, msg) {
     });
   }
   if (!commitVideoCommand(room, msg)) return fail(ws, 'INVALID_ACTION', 'A ação de vídeo é inválida.');
+  persistRooms();
 
   const snapshot = projectedVideoState(room);
   rememberCommand(room, commandId);
@@ -410,6 +711,7 @@ function leaveRoom(ws) {
   ws.participantId = null;
   electLeader(room);
   touch(room);
+  persistRooms();
   broadcast(room, {
     type: 'PEER_LEFT',
     participantId: participant.id,
@@ -417,6 +719,8 @@ function leaveRoom(ws) {
     leader: leaderInfo(room),
   });
 }
+
+loadRooms();
 
 const server = http.createServer((req, res) => {
   if (req.method === 'GET' && (req.url === '/' || req.url === '/health')) {
@@ -482,14 +786,20 @@ heartbeatTimer.unref();
 
 const cleanupTimer = setInterval(() => {
   const now = Date.now();
+  let changed = false;
   for (const [roomCode, room] of rooms) {
     for (const [id, participant] of room.participants) {
       if (!participant.ws && participant.disconnectedAt && now - participant.disconnectedAt > ROOM_TTL_MS) {
         room.participants.delete(id);
+        changed = true;
       }
     }
-    if (room.participants.size === 0 || now - room.lastActivityAt > ROOM_TTL_MS) rooms.delete(roomCode);
+    if (room.participants.size === 0 || now - room.lastActivityAt > ROOM_TTL_MS) {
+      rooms.delete(roomCode);
+      changed = true;
+    }
   }
+  if (changed) persistRooms();
 }, 60_000);
 cleanupTimer.unref();
 
@@ -497,6 +807,7 @@ function shutdown(signal) {
   console.log(`${signal}: encerrando servidor...`);
   clearInterval(heartbeatTimer);
   clearInterval(cleanupTimer);
+  persistRooms();
   for (const ws of wss.clients) ws.close(1001, 'Servidor reiniciando');
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(1), 10_000).unref();

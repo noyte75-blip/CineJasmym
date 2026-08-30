@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="preconnect" href="https://encontro-jasmym-e-livia-backend-uq81.onrender.com" crossorigin />
-  <link rel="stylesheet" href="style.css?v=13" />
+  <link rel="stylesheet" href="style.css?v=14.1" />
 </head>
 <body>
   <div class="garden-glow garden-glow-one" aria-hidden="true"></div>
@@ -24,9 +24,9 @@
         <span class="leaf-sprig">❦</span>
         <svg class="flower jasmine" viewBox="0 0 64 64"><use href="#svg-jasmine"/></svg>
       </div>
-      <p class="eyebrow">nosso cantinho de cinema</p>
-      <h1 class="title">Encontro de <span>Jasmym</span> &amp; <span>Lívia</span></h1>
-      <p class="subtitle">um telão, duas flores e o mesmo momento ✨</p>
+      <p class="eyebrow" data-neutral="sala de cinema">nosso cantinho de cinema</p>
+      <h1 class="title" data-neutral="Sala de filmes">Encontro de <span>Jasmym</span> &amp; <span>Lívia</span></h1>
+      <p class="subtitle" data-neutral="um lugar para assistir junto ✨">um telão, duas flores e o mesmo momento ✨</p>
 
       <div class="profile-picker">
         <label class="avatar-picker" for="profile-photo-input" title="Escolher foto de perfil">
@@ -49,15 +49,15 @@
       <div class="tab-panel" id="panel-create">
         <label class="field-label" for="create-name">Como vamos te chamar?</label>
         <input id="create-name" class="text-input" type="text" placeholder="Seu nome" maxlength="24" autocomplete="name" />
-        <button id="btn-create-room" class="primary-btn">Criar nosso encontro <span>✿</span></button>
+        <button id="btn-create-room" class="primary-btn" data-neutral="Criar sala de vídeo">Criar nosso encontro <span>✿</span></button>
       </div>
 
       <div class="tab-panel hidden" id="panel-join">
         <label class="field-label" for="join-name">Como vamos te chamar?</label>
         <input id="join-name" class="text-input" type="text" placeholder="Seu nome" maxlength="24" autocomplete="name" />
-        <label class="field-label" for="join-code">Código do encontro</label>
+        <label class="field-label" for="join-code" data-neutral="Código da sala">Código do encontro</label>
         <input id="join-code" class="text-input room-code-input" type="text" placeholder="EX: AB12CD" maxlength="6" />
-        <button id="btn-join-room" class="primary-btn">Entrar no encontro <span>♡</span></button>
+        <button id="btn-join-room" class="primary-btn" data-neutral="Entrar na sala">Entrar no encontro <span>♡</span></button>
       </div>
 
       <p id="landing-error" class="error-text hidden" role="alert"></p>
@@ -70,8 +70,8 @@
       <div class="room-brand">
         <svg class="flower flower-mini jasmine" viewBox="0 0 64 64" aria-hidden="true"><use href="#svg-jasmine"/></svg>
         <div>
-          <p class="eyebrow">agora juntas</p>
-          <h1>Nosso encontro</h1>
+          <p class="eyebrow" data-neutral="sessão compartilhada">agora juntas</p>
+          <h1 data-neutral="Sala de vídeo">Nosso encontro</h1>
         </div>
         <svg class="flower flower-mini lily" viewBox="0 0 64 64" aria-hidden="true"><use href="#svg-lily"/></svg>
       </div>
@@ -81,7 +81,7 @@
           <div id="my-avatar" class="mini-avatar">✿</div>
           <span id="my-name-display">Você</span>
         </div>
-        <span class="together-mark">♡</span>
+        <span class="together-mark" data-neutral="•">♡</span>
         <div class="person-badge peer-person">
           <div id="peer-avatar" class="mini-avatar waiting">❀</div>
           <span id="peer-name-display">esperando…</span>
@@ -90,21 +90,22 @@
 
       <div class="room-actions">
         <span id="peer-status" class="peer-status">esperando a outra pessoa entrar…</span>
+        <button id="btn-neutral-mode" class="chip-btn neutral-mode-btn" type="button" title="Mudar esta tela para o visual neutro" aria-pressed="false">◐ modo neutro</button>
         <button id="btn-copy-link" class="chip-btn" title="Copiar link do encontro">
           sala <strong id="room-code-display">------</strong> · copiar
         </button>
-        <button id="btn-toggle-chat" class="chip-btn chat-toggle-mobile">💬 abrir chat</button>
+        <button id="btn-toggle-chat" class="chip-btn chat-toggle-mobile">💬 abrir chat <span id="chat-unread-badge" class="chat-unread-badge hidden" aria-label="Mensagens não lidas">0</span></button>
       </div>
     </header>
 
     <main class="room-main">
       <section class="video-column">
         <div class="video-card paper-card">
-          <div class="video-wrapper">
+          <div id="video-wrapper" class="video-wrapper">
             <div id="player-container" class="player-container"></div>
             <div id="video-placeholder" class="video-placeholder">
               <div class="placeholder-flower">✿</div>
-              <p>Escolha um vídeo para começar o encontro</p>
+              <p data-neutral="Escolha um vídeo para começar a sessão">Escolha um vídeo para começar o encontro</p>
               <small>YouTube, MP4 ou WebM</small>
             </div>
             <button id="resume-banner" class="resume-banner hidden" type="button">
@@ -118,6 +119,9 @@
             <button id="btn-playpause" class="control-btn main-control" title="Reproduzir" aria-label="Reproduzir">▶</button>
             <button id="btn-back10" class="control-btn" title="Voltar 10 segundos" aria-label="Voltar 10 segundos">−10</button>
             <button id="btn-fwd10" class="control-btn" title="Avançar 10 segundos" aria-label="Avançar 10 segundos">+10</button>
+            <button id="btn-solo-mode" class="control-btn solo-control" type="button" title="Assistir em modo solo neste aparelho" aria-label="Ativar modo solo">◒</button>
+            <button id="btn-pip" class="control-btn" type="button" title="Picture in Picture disponível para MP4 e WebM" aria-label="Abrir Picture in Picture" disabled>▣</button>
+            <button id="btn-fullscreen" class="control-btn" type="button" title="Tela cheia" aria-label="Abrir tela cheia">⛶</button>
             <input id="seek-bar" class="seek-bar" type="range" min="0" max="100" step="0.1" value="0" aria-label="Posição do vídeo" />
             <span id="time-display" class="time-display">00:00 / 00:00</span>
           </div>
@@ -142,10 +146,15 @@
         <div id="chat-resize-handle" class="chat-resize-handle" aria-label="Arraste para redimensionar o chat"></div>
         <div class="chat-header">
           <div>
-            <span class="chat-kicker">entre flores</span>
-            <strong>Conversinha</strong>
+            <span class="chat-kicker" data-neutral="chat da sala">entre flores</span>
+            <strong data-neutral="Conversas">Conversinha</strong>
           </div>
-          <button id="btn-close-chat" class="chat-close-mobile" aria-label="Fechar chat">×</button>
+          <div class="chat-header-actions">
+            <button id="btn-notifications" class="chat-icon-btn" type="button" title="Ativar notificações neste aparelho" aria-label="Ativar notificações">🔔</button>
+            <button id="btn-attention-ping" class="chat-icon-btn" type="button" title="Chamar a atenção da outra pessoa" aria-label="Chamar a atenção da outra pessoa">✦</button>
+            <button id="btn-clear-chat-for-me" class="chat-icon-btn" type="button" title="Apagar todas as mensagens somente nesta tela" aria-label="Apagar todas as mensagens somente nesta tela">⌫</button>
+            <button id="btn-close-chat" class="chat-close-mobile" aria-label="Fechar chat">×</button>
+          </div>
         </div>
         <div id="chat-messages" class="chat-messages" aria-live="polite">
           <div class="chat-welcome">
@@ -163,6 +172,7 @@
         <form id="chat-form" class="chat-form">
           <label class="attach-btn" for="chat-media-input" title="Enviar foto ou GIF" aria-label="Enviar foto ou GIF">＋</label>
           <input id="chat-media-input" class="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp,image/gif" />
+          <button id="btn-open-gif" class="gif-btn" type="button" title="Pesquisar GIFs na web" aria-label="Pesquisar GIFs na web">GIF</button>
           <input id="chat-input" class="text-input" type="text" placeholder="Escreva uma mensagem…" maxlength="600" autocomplete="off" />
           <button type="submit" class="chat-send-btn" aria-label="Enviar mensagem">➤</button>
         </form>
@@ -170,6 +180,30 @@
       </aside>
     </main>
   </section>
+
+  <div id="gif-picker" class="gif-picker-modal hidden" role="dialog" aria-modal="true" aria-labelledby="gif-picker-title">
+    <div class="gif-picker-card paper-card">
+      <div class="gif-picker-header">
+        <div>
+          <span class="chat-kicker">figurinhas da web</span>
+          <strong id="gif-picker-title">Pesquisar GIF</strong>
+        </div>
+        <button id="btn-close-gif" class="chat-icon-btn" type="button" aria-label="Fechar pesquisa de GIF">×</button>
+      </div>
+      <form id="gif-search-form" class="gif-search-form">
+        <input id="gif-search-input" class="text-input" type="search" maxlength="50" placeholder="Ex.: gato feliz, abraço, risada…" autocomplete="off" />
+        <button class="secondary-btn" type="submit">Pesquisar</button>
+      </form>
+      <p id="gif-picker-status" class="gif-picker-status">Pesquise uma reação para escolher um GIF.</p>
+      <div id="gif-results" class="gif-results" aria-live="polite"></div>
+      <a class="giphy-credit" href="https://giphy.com" target="_blank" rel="noreferrer">GIFs por GIPHY</a>
+    </div>
+  </div>
+
+  <div id="attention-toast" class="attention-toast hidden" role="status" aria-live="assertive">
+    <span>✦</span>
+    <strong id="attention-toast-text">A outra pessoa chamou você.</strong>
+  </div>
 
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
     <defs>
@@ -192,12 +226,12 @@
     </defs>
   </svg>
 
-  <script src="config.js?v=13"></script>
-  <script src="video-players/player-interface.js?v=13"></script>
-  <script src="video-players/html5-player.js?v=13"></script>
-  <script src="video-players/youtube-player.js?v=13"></script>
-  <script src="websocket-client.js?v=13"></script>
-  <script src="sync.js?v=13"></script>
-  <script src="app.js?v=13"></script>
+  <script src="config.js?v=14.1"></script>
+  <script src="video-players/player-interface.js?v=14.1"></script>
+  <script src="video-players/html5-player.js?v=14.1"></script>
+  <script src="video-players/youtube-player.js?v=14.1"></script>
+  <script src="websocket-client.js?v=14.1"></script>
+  <script src="sync.js?v=14.1"></script>
+  <script src="app.js?v=14.1"></script>
 </body>
 </html>
