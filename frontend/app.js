@@ -1117,7 +1117,14 @@ fullscreenGestureSurface.addEventListener('pointerup', (event) => {
     hideFullscreenGestureHint();
     openChat({ focus: false });
   } else if (Math.abs(deltaX) < 12 && Math.abs(deltaY) < 12) {
-    showFullscreenGestureHint(2200);
+    // O banner de "toque para continuar" agora fica embaixo desta camada de
+    // gesto (para o swipe funcionar mesmo quando ele está visível). Um toque
+    // simples repassa o clique pra ele, se estiver na tela.
+    if (els.resumeBanner && !els.resumeBanner.classList.contains('hidden')) {
+      els.resumeBanner.click();
+    } else {
+      showFullscreenGestureHint(2200);
+    }
   }
   event.preventDefault();
 });
