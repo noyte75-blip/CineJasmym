@@ -1,4 +1,4 @@
-# Encontro de Jasmym e Lívia — versão 14.1
+# Encontro de Jasmym e Lívia — versão 15
 
 Watch Together simples para exatamente duas pessoas, com vídeo sincronizado,
 chat, fotos, GIFs e foto de perfil. O tema visual usa jasmim, lírio, tons de
@@ -30,6 +30,23 @@ rosa, lilás e verde.
   continua sendo uma escolha local daquele aparelho.
 - As salas e o histórico são gravados em `backend/data/rooms.json` de forma
   segura. Assim, uma reinicialização comum do processo não perde a conversa.
+
+## Novidades da V15
+
+- Respostas diretas no chat, com a mensagem original destacada.
+- Configurações com visuais Encontro, Neutro, Escuro e Terror.
+- Reconexão automática da última sala por até 7 minutos após sair.
+- Botão de comentar o trecho atual: captura um quadro em MP4/WebM ou inclui o
+  minuto do vídeo no YouTube.
+- Chat compacto no celular para manter o vídeo visível enquanto escreve.
+
+## Correção de cache
+
+- Todos os arquivos estáticos receberam URLs `?v=15`. Assim, após o deploy,
+  os aparelhos baixam a configuração atual, inclusive a busca de GIFs, sem
+  depender de limpar o cache manualmente.
+- Esta versão não altera o backend nem o protocolo: ela preserva chat,
+  histórico, sincronização e o aviso sonoro já existentes.
 
 ## O que mudou na sincronização
 
@@ -89,25 +106,16 @@ render.yaml  configuração do backend
 netlify.toml configuração do frontend
 ```
 
-## Atualização obrigatória — não misture versões
+## Atualização da V15
 
-Para a versão 14.1 funcionar, substitua as duas pastas completas, nesta ordem:
+Para esta atualização, basta substituir a pasta `frontend/` completa no projeto
+da Netlify. O backend do Render não precisa ser alterado.
 
-1. Substitua a pasta `backend/` no repositório usado pelo Render.
+1. Substitua a pasta `frontend/` inteira no projeto da Netlify.
 2. Espere o deploy terminar.
-   - No painel do Render, confira a variável `MAX_MESSAGE_BYTES`. Se ela existir
-     com o valor antigo `16384`, troque por `1500000` (ou apague para usar o
-     novo padrão). Sem isso, fotos e GIFs serão recusados pelo backend.
-3. Abra `https://SEU-BACKEND.onrender.com/health` e confirme:
-
-   ```json
-   { "protocolVersion": 15 }
-   ```
-
-4. Só depois substitua a pasta `frontend/` inteira no projeto da Netlify.
-5. Abra o código-fonte do site e confirme que os scripts terminam em `?v=14.1`.
-6. Crie uma sala, envie uma mensagem e recarregue a página: ela deve voltar no
-   chat automaticamente.
+3. Abra o site normalmente: os scripts agora terminam em `?v=15` e não usam
+   a cópia antiga guardada no navegador.
+4. Pesquise um GIF para confirmar a atualização.
 
 O backend cria `data/rooms.json` sozinho. Caso o serviço de hospedagem substitua
 o disco a cada nova implantação, configure um disco persistente e defina

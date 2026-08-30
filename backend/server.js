@@ -17,7 +17,7 @@ const ALLOWED_ORIGINS = new Set(
   (process.env.ALLOWED_ORIGINS || '').split(',').map((value) => value.trim()).filter(Boolean),
 );
 
-const PROTOCOL_VERSION = 15;
+const PROTOCOL_VERSION = 16;
 // Pequeno tempo para os dois navegadores receberem o PLAY antes de o relógio
 // começar a avançar. Isso reduz a diferença inicial sem transmitir o vídeo.
 const PLAY_START_DELAY_MS = 700;
@@ -230,11 +230,17 @@ function normalizeStoredChatMessage(value) {
   const participantId = cleanMessageId(value.participantId);
   const text = cleanText(value.text, CHAT_MAX_LENGTH);
   const media = normalizeChatMedia(value.media);
+  const replyTo = value.replyTo && typeof value.replyTo === 'object' ? {
+    id: cleanMessageId(value.replyTo.id),
+    from: normalizeName(value.replyTo.from || 'Mensagem'),
+    text: cleanText(value.replyTo.text, 160),
+  } : null;
   if (!id || !participantId || (!text && !media)) return null;
   return {
     id,
     text,
     media,
+    replyTo: replyTo?.id ? replyTo : null,
     from: normalizeName(value.from),
     participantId,
     sentAt: Number.isFinite(value.sentAt) ? Math.max(0, value.sentAt) : Date.now(),
@@ -242,10 +248,11 @@ function normalizeStoredChatMessage(value) {
 }
 
 function chatHistory(room) {
-  return [...room.chatMessages.values()].map(({ id, text, media, from, participantId, sentAt }) => ({
+  return [...room.chatMessages.values()].map(({ id, text, media, replyTo, from, participantId, sentAt }) => ({
     id,
     text,
     media,
+    replyTo,
     from,
     participantId,
     sentAt,
@@ -634,6 +641,11 @@ function handleRoomMessage(ws, msg) {
       id: messageId,
       text,
       media,
+      replyTo: msg.replyTo && typeof msg.replyTo === 'object' ? {
+        id: cleanMessageId(msg.replyTo.id),
+        from: normalizeName(msg.replyTo.from || 'Mensagem'),
+        text: cleanText(msg.replyTo.text, 160),
+      } : null,
       from: participant.name,
       participantId: participant.id,
       sentAt: Date.now(),

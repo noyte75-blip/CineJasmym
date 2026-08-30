@@ -32,6 +32,7 @@ const els = {
   btnSoloMode: document.getElementById('btn-solo-mode'),
   btnPip: document.getElementById('btn-pip'),
   btnFullscreen: document.getElementById('btn-fullscreen'),
+  btnDiscussMoment: document.getElementById('btn-discuss-moment'),
   seekBar: document.getElementById('seek-bar'),
   timeDisplay: document.getElementById('time-display'),
   syncDot: document.getElementById('sync-dot'),
@@ -48,11 +49,20 @@ const els = {
   mediaPreview: document.getElementById('media-preview'),
   mediaPreviewName: document.getElementById('media-preview-name'),
   btnRemoveMedia: document.getElementById('btn-remove-media'),
+  replyPreviewBar: document.getElementById('reply-preview-bar'),
+  replyPreviewText: document.getElementById('reply-preview-text'),
+  btnCancelReply: document.getElementById('btn-cancel-reply'),
   chatError: document.getElementById('chat-error'),
   btnToggleChat: document.getElementById('btn-toggle-chat'),
   btnCloseChat: document.getElementById('btn-close-chat'),
   btnNotifications: document.getElementById('btn-notifications'),
   btnAttentionPing: document.getElementById('btn-attention-ping'),
+  settingsModal: document.getElementById('settings-modal'),
+  btnCloseSettings: document.getElementById('btn-close-settings'),
+  themeSelect: document.getElementById('theme-select'),
+  btnSettingsChat: document.getElementById('btn-settings-chat'),
+  btnSettingsFullscreen: document.getElementById('btn-settings-fullscreen'),
+  btnSettingsPip: document.getElementById('btn-settings-pip'),
   btnClearChatForMe: document.getElementById('btn-clear-chat-for-me'),
   btnOpenGif: document.getElementById('btn-open-gif'),
   gifPicker: document.getElementById('gif-picker'),
@@ -91,6 +101,8 @@ const state = {
   pendingMediaName: '',
   soloMode: false,
   neutralMode: false,
+  theme: 'encontro',
+  replyTo: null,
   notificationsEnabled: false,
   unreadChatCount: 0,
   hiddenMessageIds: new Set(),
@@ -100,9 +112,9 @@ const state = {
 
 const SESSION_STORAGE_KEY = 'encontro-jasmym-sessions-v1';
 const PROFILE_STORAGE_KEY = 'encontro-jasmym-profile-v1';
-const UI_STORAGE_KEY = 'encontro-jasmym-ui-v14';
+const UI_STORAGE_KEY = 'encontro-jasmym-ui-v15';
 const HIDDEN_CHAT_STORAGE_KEY = 'encontro-jasmym-hidden-chat-v14';
-const PROTOCOL_VERSION = 15;
+const PROTOCOL_VERSION = 16;
 
 function readJson(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key)) ?? fallback; }
@@ -113,6 +125,7 @@ function saveUiPreferences() {
   try {
     localStorage.setItem(UI_STORAGE_KEY, JSON.stringify({
       neutralMode: state.neutralMode,
+      theme: state.theme,
       notificationsEnabled: state.notificationsEnabled,
     }));
   } catch {
@@ -121,17 +134,19 @@ function saveUiPreferences() {
 }
 
 function applyNeutralMode() {
+  state.neutralMode = state.theme === 'neutral';
   document.body.classList.toggle('neutral-mode', state.neutralMode);
+  document.body.dataset.theme = state.theme;
   document.querySelectorAll('[data-neutral]').forEach((element) => {
     if (!element.dataset.defaultHtml) element.dataset.defaultHtml = element.innerHTML;
     element.innerHTML = state.neutralMode ? element.dataset.neutral : element.dataset.defaultHtml;
   });
   document.title = state.neutralMode ? 'Sala de filmes' : 'Encontro de Jasmym e Lívia';
   if (els.btnNeutralMode) {
-    els.btnNeutralMode.classList.toggle('active', state.neutralMode);
-    els.btnNeutralMode.setAttribute('aria-pressed', String(state.neutralMode));
-    els.btnNeutralMode.textContent = state.neutralMode ? '◑ modo normal' : '◐ modo neutro';
+    els.btnNeutralMode.classList.toggle('active', state.theme !== 'encontro');
+    els.btnNeutralMode.textContent = '⚙ configurações';
   }
+  if (els.themeSelect) els.themeSelect.value = state.theme;
 }
 
 function notificationIsSupported() {
@@ -252,7 +267,7 @@ function saveHiddenMessagesForRoom() {
 }
 
 const savedUiPreferences = readJson(UI_STORAGE_KEY, {});
-state.neutralMode = Boolean(savedUiPreferences.neutralMode);
+state.theme = savedUiPreferences.theme || (savedUiPreferences.neutralMode ? 'neutral' : 'encontro');
 state.notificationsEnabled = Boolean(savedUiPreferences.notificationsEnabled);
 applyNeutralMode();
 updateNotificationButton();
@@ -263,7 +278,7 @@ function readSessions() { return readJson(SESSION_STORAGE_KEY, {}); }
 function saveRoomSession(roomCode, reconnectToken, participantId) {
   if (!roomCode || !reconnectToken) return;
   const sessions = readSessions();
-  sessions[roomCode] = { reconnectToken, participantId, name: state.myName };
+  sessions[roomCode] = { reconnectToken, participantId, name: state.myName, savedAt: Date.now() };
   localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(sessions));
 }
 
@@ -507,6 +522,7 @@ function attachRoomListeners(client) {
       participantId: message.participantId,
       media: message.media,
       avatar: message.avatar || sender?.avatar || null,
+      replyTo: message.replyTo,
     });
     if (!mine && row) {
       maybeMarkChatUnread();
@@ -960,6 +976,7 @@ function renderChatHistory(messages) {
       participantId: message.participantId,
       media: message.media,
       avatar: message.avatar || sender?.avatar || null,
+      replyTo: message.replyTo,
     });
     if (row) visibleMessages += 1;
   }
@@ -978,7 +995,7 @@ function deleteChatMessageForMe(messageId, row) {
   showChatEmptyState();
 }
 
-function openChatMessageMenu(trigger, { messageId, mine, row }) {
+function openChatMessageMenu(trigger, { messageId, mine, row, author, text }) {
   document.querySelectorAll('.chat-message-menu-panel').forEach((element) => element.remove());
   const panel = document.createElement('div');
   panel.className = 'chat-message-menu-panel';
@@ -995,6 +1012,7 @@ function openChatMessageMenu(trigger, { messageId, mine, row }) {
     panel.appendChild(button);
   };
 
+  addAction('Responder', () => setReplyTo({ id: messageId, from: author, text }));
   addAction('Apagar para mim', () => deleteChatMessageForMe(messageId, row));
   if (mine) {
     addAction('Apagar para todos', () => {
@@ -1016,7 +1034,7 @@ function openChatMessageMenu(trigger, { messageId, mine, row }) {
   setTimeout(() => document.addEventListener('pointerdown', dismiss, true), 0);
 }
 
-function addChatMessage(author, text, mine, { id = null, participantId = null, media = null, avatar = null } = {}) {
+function addChatMessage(author, text, mine, { id = null, participantId = null, media = null, avatar = null, replyTo = null } = {}) {
   if (id) {
     const existing = findChatMessageRow(id);
     if (existing) return existing;
@@ -1034,6 +1052,12 @@ function addChatMessage(author, text, mine, { id = null, participantId = null, m
   authorElement.className = 'chat-author';
   authorElement.textContent = author;
   bubble.appendChild(authorElement);
+  if (replyTo?.id) {
+    const quote = document.createElement('div');
+    quote.className = 'chat-reply-quote';
+    quote.textContent = `${replyTo.from}: ${replyTo.text || 'mídia'}`;
+    bubble.appendChild(quote);
+  }
   if (media) {
     const image = document.createElement('img');
     image.className = 'chat-media';
@@ -1056,7 +1080,7 @@ function addChatMessage(author, text, mine, { id = null, participantId = null, m
     menuButton.textContent = '⋯';
     menuButton.title = 'Opções da mensagem';
     menuButton.setAttribute('aria-label', 'Opções da mensagem');
-    menuButton.addEventListener('click', () => openChatMessageMenu(menuButton, { messageId: id, mine, row }));
+    menuButton.addEventListener('click', () => openChatMessageMenu(menuButton, { messageId: id, mine, row, author, text }));
     actions.appendChild(menuButton);
     row.appendChild(actions);
   }
@@ -1101,6 +1125,16 @@ function clearPendingMedia() {
   els.mediaPreview.removeAttribute('src');
   els.mediaPreviewBar.classList.add('hidden');
 }
+
+function setReplyTo(replyTo) {
+  state.replyTo = replyTo;
+  els.replyPreviewText.textContent = `Respondendo a ${replyTo.from}: ${replyTo.text || 'mídia'}`;
+  els.replyPreviewBar.classList.remove('hidden');
+  els.chatInput.focus();
+}
+
+function clearReplyTo() { state.replyTo = null; els.replyPreviewBar.classList.add('hidden'); }
+els.btnCancelReply.addEventListener('click', clearReplyTo);
 els.btnRemoveMedia.addEventListener('click', clearPendingMedia);
 
 els.chatForm.addEventListener('submit', (event) => {
@@ -1109,11 +1143,13 @@ els.chatForm.addEventListener('submit', (event) => {
   const media = state.pendingMedia;
   if (!text && !media) return;
   const messageId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const sent = state.wsClient?.send({ type: 'CHAT_MESSAGE', messageId, text, media });
+  const replyTo = state.replyTo;
+  const sent = state.wsClient?.send({ type: 'CHAT_MESSAGE', messageId, text, media, replyTo });
   if (!sent) return showChatError('A conexão caiu antes de enviar. Tente novamente.');
-  addChatMessage(state.myName, text, true, { id: messageId, participantId: state.participantId, media, avatar: state.avatar });
+  addChatMessage(state.myName, text, true, { id: messageId, participantId: state.participantId, media, avatar: state.avatar, replyTo });
   els.chatInput.value = '';
   clearPendingMedia();
+  clearReplyTo();
 });
 
 function openChat() {
@@ -1155,10 +1191,31 @@ els.btnAttentionPing.addEventListener('click', () => {
   if (!sent) showChatError('A conexão caiu antes de enviar o aviso.');
 });
 
-els.btnNeutralMode.addEventListener('click', () => {
-  state.neutralMode = !state.neutralMode;
-  saveUiPreferences();
-  applyNeutralMode();
+els.btnNeutralMode.addEventListener('click', () => els.settingsModal.classList.remove('hidden'));
+els.btnCloseSettings.addEventListener('click', () => els.settingsModal.classList.add('hidden'));
+els.settingsModal.addEventListener('click', (event) => { if (event.target === els.settingsModal) els.settingsModal.classList.add('hidden'); });
+els.themeSelect.addEventListener('change', () => { state.theme = els.themeSelect.value; saveUiPreferences(); applyNeutralMode(); });
+els.btnSettingsChat.addEventListener('click', () => { openChat(); els.settingsModal.classList.add('hidden'); });
+els.btnSettingsFullscreen.addEventListener('click', () => { els.btnFullscreen.click(); els.settingsModal.classList.add('hidden'); });
+els.btnSettingsPip.addEventListener('click', () => { els.btnPip.click(); els.settingsModal.classList.add('hidden'); });
+
+function formatMomentTime(seconds) { return formatTime(Math.floor(seconds || 0)); }
+els.btnDiscussMoment.addEventListener('click', () => {
+  const time = formatMomentTime(state.player?.getCurrentTime?.());
+  els.chatInput.value = `Sobre ${time}: `;
+  const video = state.player?.video;
+  if (video && video.readyState >= 2) {
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.min(640, video.videoWidth || 640);
+      canvas.height = Math.round(canvas.width * ((video.videoHeight || 360) / (video.videoWidth || 640)));
+      canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+      setPendingMedia(canvas.toDataURL('image/jpeg', .78), `Trecho ${time}`);
+    } catch { showChatError('Este vídeo não permite capturar a imagem; o minuto foi inserido na mensagem.'); }
+  } else if (state.currentVideoType === 'youtube') {
+    showChatError('O YouTube bloqueia captura automática; o minuto foi inserido na mensagem.');
+  }
+  openChat();
 });
 
 function openGifPicker() {
@@ -1274,9 +1331,24 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
+function autoRejoinRecentRoom() {
+  if (roomFromUrl || state.roomCode) return;
+  const now = Date.now();
+  const sessions = readSessions();
+  const recent = Object.entries(sessions).find(([, value]) => value?.reconnectToken && value?.name && now - Number(value.savedAt || 0) < 7 * 60_000);
+  if (!recent) return;
+  const [roomCode, session] = recent;
+  document.querySelector('.tab-btn[data-tab="join"]')?.click();
+  els.joinName.value = session.name;
+  els.joinCode.value = roomCode;
+  els.btnJoinRoom.click();
+}
+setTimeout(autoRejoinRecentRoom, 150);
+
 updateFullscreenButton();
 
 window.addEventListener('beforeunload', () => {
   state.closing = true;
+  if (state.roomCode) saveRoomSession(state.roomCode, state.reconnectToken, state.participantId);
   state.sync?.destroy();
 });

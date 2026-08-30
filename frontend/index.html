@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="preconnect" href="https://encontro-jasmym-e-livia-backend-uq81.onrender.com" crossorigin />
-  <link rel="stylesheet" href="style.css?v=14.1" />
+  <link rel="stylesheet" href="style.css?v=15" />
 </head>
 <body>
   <div class="garden-glow garden-glow-one" aria-hidden="true"></div>
@@ -90,7 +90,7 @@
 
       <div class="room-actions">
         <span id="peer-status" class="peer-status">esperando a outra pessoa entrar…</span>
-        <button id="btn-neutral-mode" class="chip-btn neutral-mode-btn" type="button" title="Mudar esta tela para o visual neutro" aria-pressed="false">◐ modo neutro</button>
+        <button id="btn-neutral-mode" class="chip-btn neutral-mode-btn" type="button" title="Abrir configurações">⚙ configurações</button>
         <button id="btn-copy-link" class="chip-btn" title="Copiar link do encontro">
           sala <strong id="room-code-display">------</strong> · copiar
         </button>
@@ -122,6 +122,7 @@
             <button id="btn-solo-mode" class="control-btn solo-control" type="button" title="Assistir em modo solo neste aparelho" aria-label="Ativar modo solo">◒</button>
             <button id="btn-pip" class="control-btn" type="button" title="Picture in Picture disponível para MP4 e WebM" aria-label="Abrir Picture in Picture" disabled>▣</button>
             <button id="btn-fullscreen" class="control-btn" type="button" title="Tela cheia" aria-label="Abrir tela cheia">⛶</button>
+            <button id="btn-discuss-moment" class="control-btn" type="button" title="Comentar este trecho" aria-label="Comentar este trecho">▧</button>
             <input id="seek-bar" class="seek-bar" type="range" min="0" max="100" step="0.1" value="0" aria-label="Posição do vídeo" />
             <span id="time-display" class="time-display">00:00 / 00:00</span>
           </div>
@@ -168,6 +169,7 @@
           <span id="media-preview-name">imagem</span>
           <button id="btn-remove-media" type="button" aria-label="Remover imagem">×</button>
         </div>
+        <div id="reply-preview-bar" class="reply-preview-bar hidden"><span id="reply-preview-text"></span><button id="btn-cancel-reply" type="button" aria-label="Cancelar resposta">×</button></div>
 
         <form id="chat-form" class="chat-form">
           <label class="attach-btn" for="chat-media-input" title="Enviar foto ou GIF" aria-label="Enviar foto ou GIF">＋</label>
@@ -205,6 +207,15 @@
     <strong id="attention-toast-text">A outra pessoa chamou você.</strong>
   </div>
 
+  <div id="settings-modal" class="settings-modal hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <div class="settings-card paper-card">
+      <div class="settings-head"><strong id="settings-title">Configurações</strong><button id="btn-close-settings" class="chat-icon-btn" type="button">×</button></div>
+      <label class="field-label" for="theme-select">Visual desta tela</label>
+      <select id="theme-select" class="select-input"><option value="encontro">Encontro</option><option value="neutral">Neutro</option><option value="dark">Escuro</option><option value="terror">Terror</option></select>
+      <div class="settings-actions"><button id="btn-settings-chat" class="secondary-btn" type="button">Abrir chat</button><button id="btn-settings-fullscreen" class="secondary-btn" type="button">Tela cheia</button><button id="btn-settings-pip" class="secondary-btn" type="button">Picture in Picture</button></div>
+    </div>
+  </div>
+
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
     <defs>
       <symbol id="svg-lily" viewBox="0 0 64 64">
@@ -226,12 +237,12 @@
     </defs>
   </svg>
 
-  <script src="config.js?v=14.1"></script>
-  <script src="video-players/player-interface.js?v=14.1"></script>
-  <script src="video-players/html5-player.js?v=14.1"></script>
-  <script src="video-players/youtube-player.js?v=14.1"></script>
-  <script src="websocket-client.js?v=14.1"></script>
-  <script src="sync.js?v=14.1"></script>
-  <script src="app.js?v=14.1"></script>
+  <script src="config.js?v=15"></script>
+  <script src="video-players/player-interface.js?v=15"></script>
+  <script src="video-players/html5-player.js?v=15"></script>
+  <script src="video-players/youtube-player.js?v=15"></script>
+  <script src="websocket-client.js?v=15"></script>
+  <script src="sync.js?v=15"></script>
+  <script src="app.js?v=15"></script>
 </body>
 </html>
