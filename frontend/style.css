@@ -657,6 +657,8 @@ body.cinema-mode .video-wrapper {
   touch-action: none;
 }
 body.cinema-mode .video-wrapper .player-container, body.cinema-mode .video-wrapper .video-placeholder { position: absolute; inset: 0; }
+body.cinema-mode .room-header, body.cinema-mode .video-controls, body.cinema-mode .video-input-card, body.cinema-mode .room-main > :not(.video-card):not(.chat-panel) { display: none !important; }
+body.cinema-mode .chat-close-mobile { display: inline-grid; }
 body.cinema-mode .video-wrapper .player-container video { object-fit: contain; }
 body.cinema-mode .fullscreen-gesture-layer {
   position: absolute;

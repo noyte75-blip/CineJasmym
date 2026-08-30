@@ -36,6 +36,7 @@ const els = {
   fullscreenGestureLayer: document.getElementById('fullscreen-gesture-layer'),
   fullscreenGestureHint: document.getElementById('fullscreen-gesture-hint'),
   btnExitFullscreen: document.getElementById('btn-exit-fullscreen'),
+  btnFullscreenChat: document.getElementById('btn-fullscreen-chat'),
   btnDiscussMoment: document.getElementById('btn-discuss-moment'),
   seekBar: document.getElementById('seek-bar'),
   timeDisplay: document.getElementById('time-display'),
@@ -1100,6 +1101,10 @@ fullscreenGestureSurface.addEventListener('pointercancel', () => { fullscreenSwi
 els.btnExitFullscreen?.addEventListener('click', (event) => {
   event.stopPropagation();
   exitFullscreenView();
+});
+els.btnFullscreenChat?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  els.chatPanel.classList.contains('open') ? closeChat() : openChat({ focus: false });
 });
 els.resumeBanner.addEventListener('click', () => {
   state.sync?.localPlay();
