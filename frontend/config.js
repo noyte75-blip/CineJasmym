@@ -28,7 +28,7 @@ const CONFIG = {
   // developers.giphy.com e cole aqui antes do deploy. A chave fica no
   // frontend porque a própria GIPHY exige que a busca seja feita pelo cliente.
   // Deixar vazio não afeta o restante do site; apenas desativa a busca de GIFs.
-  GIPHY_API_KEY: '',
+  GIPHY_API_KEY: 'GDbFLs6ffPrjzMlbjiTe2pC2nuo9ZnxE',
   GIPHY_RATING: 'g',
   GIPHY_LIMIT: 18,
 };

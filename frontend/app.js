@@ -170,31 +170,60 @@ function maybeMarkChatUnread() {
 
 function showNativeNotification(title, body) {
   if (!document.hidden || !state.notificationsEnabled || !notificationIsSupported() || Notification.permission !== 'granted') return;
-  try { new Notification(title, { body, silent: true }); } catch { /* navegador bloqueou */ }
+  try { new Notification(title, { body }); } catch { /* navegador bloqueou */ }
+}
+
+function getAttentionAudioContext() {
+  const AudioCtor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtor) return null;
+  try {
+    return state.audioContext ||= new AudioCtor();
+  } catch {
+    return null;
+  }
+}
+
+function unlockAttentionSound() {
+  const context = getAttentionAudioContext();
+  if (!context || context.state === 'running') return;
+  const resume = context.resume?.();
+  if (resume?.then) resume.catch(() => {});
 }
 
 function playAttentionSound() {
-  const AudioCtor = window.AudioContext || window.webkitAudioContext;
-  if (!AudioCtor) return;
-  try {
-    const context = state.audioContext ||= new AudioCtor();
-    const resume = context.resume?.();
-    resume?.catch?.(() => {});
+  const context = getAttentionAudioContext();
+  if (!context) return;
+
+  const play = () => {
+    if (context.state !== 'running') return;
+    try {
+      const startAt = context.currentTime;
     const oscillator = context.createOscillator();
     const gain = context.createGain();
-    oscillator.type = 'sine';
-    oscillator.frequency.setValueAtTime(720, context.currentTime);
-    oscillator.frequency.exponentialRampToValueAtTime(980, context.currentTime + .13);
-    gain.gain.setValueAtTime(.0001, context.currentTime);
-    gain.gain.exponentialRampToValueAtTime(.07, context.currentTime + .02);
-    gain.gain.exponentialRampToValueAtTime(.0001, context.currentTime + .22);
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(660, startAt);
+      oscillator.frequency.exponentialRampToValueAtTime(880, startAt + .13);
+      gain.gain.setValueAtTime(.0001, startAt);
+      gain.gain.exponentialRampToValueAtTime(.09, startAt + .02);
+      gain.gain.exponentialRampToValueAtTime(.0001, startAt + .28);
     oscillator.connect(gain).connect(context.destination);
-    oscillator.start();
-    oscillator.stop(context.currentTime + .23);
-  } catch {
-    // O alerta visual continua disponível quando áudio automático é bloqueado.
+      oscillator.start(startAt);
+      oscillator.stop(startAt + .29);
+    } catch {
+      // O alerta visual continua disponível quando áudio automático é bloqueado.
+    }
+  };
+
+  if (context.state === 'running') {
+    play();
+    return;
   }
+  const resume = context.resume?.();
+  if (resume?.then) resume.then(play).catch(() => {});
 }
+
+document.addEventListener('pointerdown', unlockAttentionSound, { passive: true });
+document.addEventListener('keydown', unlockAttentionSound);
 
 function showAttention(from = 'A outra pessoa') {
   els.attentionToastText.textContent = `${from} chamou sua atenção.`;
