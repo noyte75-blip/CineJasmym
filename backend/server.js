@@ -70,7 +70,10 @@ function normalizeGiphyMediaUrl(value) {
     const parsed = new URL(raw);
     const host = parsed.hostname.toLowerCase();
     const allowedHost = host === 'i.giphy.com' || /^media\d*\.giphy\.com$/.test(host);
-    const mediaPath = /^\/media\/[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9._-]+)?$/;
+    // A API atual do GIPHY usa caminhos como
+    // /media/v1.Y2lk.../200w.gif?cid=..., que a regra antiga recusava.
+    // Continua aceitando apenas arquivos de imagem no CDN oficial do GIPHY.
+    const mediaPath = /^\/media\/[a-zA-Z0-9._/-]+\.(?:gif|webp)$/i;
     const imagePath = /^\/[a-zA-Z0-9_-]+\.(?:gif|webp)$/i;
     if (parsed.protocol !== 'https:' || !allowedHost || !(mediaPath.test(parsed.pathname) || imagePath.test(parsed.pathname))) {
       return null;
@@ -87,6 +90,29 @@ function normalizeChatMedia(value) {
 
 function cleanMessageId(value) {
   return typeof value === 'string' && MESSAGE_ID.test(value) ? value : null;
+}
+
+function normalizeReplyTo(value) {
+  if (!value || typeof value !== 'object') return null;
+  const id = cleanMessageId(value.id);
+  const text = cleanText(value.text, 160);
+  if (!id && !text) return null;
+  return {
+    id,
+    from: cleanText(value.from, NAME_MAX_LENGTH) || 'Mensagem',
+    text,
+  };
+}
+
+function normalizeReadBy(value) {
+  if (!Array.isArray(value)) return [];
+  const readers = [];
+  for (const rawId of value) {
+    const id = cleanMessageId(rawId);
+    if (id && !readers.includes(id)) readers.push(id);
+    if (readers.length === 2) break;
+  }
+  return readers;
 }
 
 function normalizeVideoUrl(value) {
@@ -230,17 +256,15 @@ function normalizeStoredChatMessage(value) {
   const participantId = cleanMessageId(value.participantId);
   const text = cleanText(value.text, CHAT_MAX_LENGTH);
   const media = normalizeChatMedia(value.media);
-  const replyTo = value.replyTo && typeof value.replyTo === 'object' ? {
-    id: cleanMessageId(value.replyTo.id),
-    from: normalizeName(value.replyTo.from || 'Mensagem'),
-    text: cleanText(value.replyTo.text, 160),
-  } : null;
+  const replyTo = normalizeReplyTo(value.replyTo);
+  const readBy = normalizeReadBy(value.readBy);
   if (!id || !participantId || (!text && !media)) return null;
   return {
     id,
     text,
     media,
-    replyTo: replyTo?.id ? replyTo : null,
+    replyTo,
+    readBy,
     from: normalizeName(value.from),
     participantId,
     sentAt: Number.isFinite(value.sentAt) ? Math.max(0, value.sentAt) : Date.now(),
@@ -248,11 +272,12 @@ function normalizeStoredChatMessage(value) {
 }
 
 function chatHistory(room) {
-  return [...room.chatMessages.values()].map(({ id, text, media, replyTo, from, participantId, sentAt }) => ({
+  return [...room.chatMessages.values()].map(({ id, text, media, replyTo, readBy, from, participantId, sentAt }) => ({
     id,
     text,
     media,
     replyTo,
+    readBy,
     from,
     participantId,
     sentAt,
@@ -263,7 +288,8 @@ function chatHistoryCost(room) {
   let total = 0;
   for (const message of room.chatMessages.values()) {
     total += message.id.length + message.participantId.length + message.from.length;
-    total += message.text.length + (message.media?.length || 0);
+    total += message.text.length + (message.media?.length || 0) + (message.replyTo?.text.length || 0);
+    total += (message.readBy || []).reduce((sum, id) => sum + id.length, 0);
   }
   return total;
 }
@@ -634,6 +660,10 @@ function handleRoomMessage(ws, msg) {
   if (msg.type === 'CHAT_MESSAGE') {
     const text = cleanText(msg.text ?? msg.message, CHAT_MAX_LENGTH);
     const media = normalizeChatMedia(msg.media);
+    const requestedMedia = msg.media !== undefined && msg.media !== null && msg.media !== '';
+    if (requestedMedia && !media) {
+      return fail(ws, 'INVALID_CHAT_MEDIA', 'Esse GIF ou imagem não pôde ser enviado. Escolha-o novamente e tente de novo.');
+    }
     if (!text && !media) return fail(ws, 'INVALID_CHAT', 'A mensagem está vazia.');
     const messageId = cleanMessageId(msg.messageId) || crypto.randomUUID();
     if (room.chatMessages.has(messageId)) return fail(ws, 'DUPLICATE_CHAT', 'Essa mensagem já foi enviada.');
@@ -641,11 +671,8 @@ function handleRoomMessage(ws, msg) {
       id: messageId,
       text,
       media,
-      replyTo: msg.replyTo && typeof msg.replyTo === 'object' ? {
-        id: cleanMessageId(msg.replyTo.id),
-        from: normalizeName(msg.replyTo.from || 'Mensagem'),
-        text: cleanText(msg.replyTo.text, 160),
-      } : null,
+      replyTo: normalizeReplyTo(msg.replyTo),
+      readBy: [],
       from: participant.name,
       participantId: participant.id,
       sentAt: Date.now(),
@@ -656,7 +683,26 @@ function handleRoomMessage(ws, msg) {
     return broadcast(room, {
       type: 'CHAT_MESSAGE',
       ...chatMessage,
-    }, ws);
+    });
+  }
+  if (msg.type === 'CHAT_READ') {
+    const messageId = cleanMessageId(msg.messageId);
+    if (!messageId) return;
+    const stored = room.chatMessages.get(messageId);
+    if (!stored || stored.participantId === participant.id) return;
+    stored.readBy = normalizeReadBy(stored.readBy);
+    if (!stored.readBy.includes(participant.id)) {
+      stored.readBy.push(participant.id);
+      touch(room);
+      persistRooms();
+    }
+    const sender = room.participants.get(stored.participantId);
+    return send(sender?.ws, {
+      type: 'CHAT_READ',
+      messageId,
+      readerId: participant.id,
+      readBy: stored.readBy,
+    });
   }
   if (msg.type === 'CHAT_DELETE') {
     const messageId = cleanMessageId(msg.messageId);

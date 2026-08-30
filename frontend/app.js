@@ -33,6 +33,8 @@ const els = {
   btnSoloMode: document.getElementById('btn-solo-mode'),
   btnPip: document.getElementById('btn-pip'),
   btnFullscreen: document.getElementById('btn-fullscreen'),
+  fullscreenGestureHint: document.getElementById('fullscreen-gesture-hint'),
+  btnExitFullscreen: document.getElementById('btn-exit-fullscreen'),
   btnDiscussMoment: document.getElementById('btn-discuss-moment'),
   seekBar: document.getElementById('seek-bar'),
   timeDisplay: document.getElementById('time-display'),
@@ -57,6 +59,8 @@ const els = {
   btnToggleChat: document.getElementById('btn-toggle-chat'),
   btnCloseChat: document.getElementById('btn-close-chat'),
   btnNotifications: document.getElementById('btn-notifications'),
+  notificationIcon: document.getElementById('notification-icon'),
+  chatNotificationDot: document.getElementById('chat-notification-dot'),
   btnAttentionPing: document.getElementById('btn-attention-ping'),
   settingsModal: document.getElementById('settings-modal'),
   btnCloseSettings: document.getElementById('btn-close-settings'),
@@ -113,8 +117,12 @@ const state = {
   replyTo: null,
   notificationsEnabled: false,
   unreadChatCount: 0,
+  chatArrivalActive: false,
+  chatArrivalTimer: null,
+  readMessageIds: new Set(),
   hiddenMessageIds: new Set(),
   attentionToastTimer: null,
+  fullscreenHintTimer: null,
   audioContext: null,
 };
 
@@ -165,7 +173,7 @@ function notificationIsSupported() {
 function updateNotificationButton() {
   if (!els.btnNotifications) return;
   const enabled = state.notificationsEnabled && notificationIsSupported() && Notification.permission === 'granted';
-  els.btnNotifications.textContent = enabled ? '🔔' : '🔕';
+  if (els.notificationIcon) els.notificationIcon.textContent = enabled ? '🔔' : '🔕';
   els.btnNotifications.classList.toggle('active', enabled);
   els.btnNotifications.title = enabled ? 'Desativar notificações neste aparelho' : 'Ativar notificações neste aparelho';
   els.btnNotifications.setAttribute('aria-label', els.btnNotifications.title);
@@ -175,6 +183,21 @@ function updateUnreadBadge() {
   const count = Math.max(0, state.unreadChatCount);
   els.chatUnreadBadge.textContent = count > 99 ? '99+' : String(count);
   els.chatUnreadBadge.classList.toggle('hidden', count === 0);
+  const showVisualAlert = count > 0 || state.chatArrivalActive;
+  els.chatNotificationDot?.classList.toggle('hidden', !showVisualAlert);
+  els.btnNotifications?.classList.toggle('has-unread', showVisualAlert);
+}
+
+function showChatArrivalAlert() {
+  state.chatArrivalActive = true;
+  els.btnNotifications?.classList.add('message-arrived');
+  clearTimeout(state.chatArrivalTimer);
+  updateUnreadBadge();
+  state.chatArrivalTimer = setTimeout(() => {
+    state.chatArrivalActive = false;
+    els.btnNotifications?.classList.remove('message-arrived');
+    updateUnreadBadge();
+  }, 3200);
 }
 
 function chatIsOpenOnThisScreen() {
@@ -513,6 +536,7 @@ function attachRoomListeners(client) {
     state.reconnectAttempts = 0;
     loadHiddenMessagesForRoom();
     if (enteringAnotherRoom) {
+      state.readMessageIds.clear();
       els.chatMessages.replaceChildren();
       showChatWelcomeState();
     }
@@ -554,6 +578,7 @@ function attachRoomListeners(client) {
   client.on('CHAT_HISTORY', (message) => {
     if (!activeClient() || (message.roomCode && message.roomCode !== state.roomCode)) return;
     renderChatHistory(message.messages);
+    markVisibleIncomingMessagesRead();
   });
   client.on('CHAT_MESSAGE', (message) => {
     if (!activeClient()) return;
@@ -565,11 +590,21 @@ function attachRoomListeners(client) {
       media: message.media,
       avatar: message.avatar || sender?.avatar || null,
       replyTo: message.replyTo,
+      readBy: message.readBy,
     });
     if (!mine && row) {
+      showChatArrivalAlert();
       maybeMarkChatUnread();
       showNativeNotification('Nova mensagem', `${message.from || 'A outra pessoa'} enviou uma mensagem.`);
+      markChatMessageRead(message.id, message.participantId);
     }
+  });
+  client.on('CHAT_READ', ({ messageId, readBy }) => {
+    if (!activeClient() || !messageId) return;
+    if (Array.isArray(readBy) && readBy.some((id) => id && id !== state.participantId)) {
+      state.readMessageIds.add(messageId);
+    }
+    updateChatMessageReadStatus(messageId, readBy);
   });
   client.on('CHAT_DELETE', ({ messageId }) => {
     if (!activeClient()) return;
@@ -856,29 +891,79 @@ function setSoloMode(active) {
   setConnectionStatus('voltando para a reprodução conjunta…', 'working');
 }
 
+function fullscreenIsActive() {
+  return document.body.classList.contains('cinema-mode')
+    || Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+}
+
+function shouldUseCinemaMode() {
+  return matchMedia('(max-width: 720px), (pointer: coarse)').matches;
+}
+
+function hideFullscreenGestureHint() {
+  clearTimeout(state.fullscreenHintTimer);
+  state.fullscreenHintTimer = null;
+  els.fullscreenGestureHint?.classList.add('hidden');
+}
+
+function showFullscreenGestureHint(duration = 3000) {
+  if (!fullscreenIsActive() || !els.fullscreenGestureHint) return;
+  clearTimeout(state.fullscreenHintTimer);
+  els.fullscreenGestureHint.classList.remove('hidden');
+  if (duration > 0) {
+    state.fullscreenHintTimer = setTimeout(hideFullscreenGestureHint, duration);
+  }
+}
+
 function updateFullscreenButton() {
-  const fullscreen = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+  const fullscreen = fullscreenIsActive();
   els.btnFullscreen.textContent = fullscreen ? '⤢' : '⛶';
   els.btnFullscreen.title = fullscreen ? 'Sair da tela cheia' : 'Tela cheia';
   els.btnFullscreen.setAttribute('aria-label', els.btnFullscreen.title);
 }
 
-async function toggleFullscreen() {
+async function exitFullscreenView() {
+  const hadCinemaMode = document.body.classList.contains('cinema-mode');
+  document.body.classList.remove('cinema-mode');
+  hideFullscreenGestureHint();
   try {
     if (document.fullscreenElement || document.webkitFullscreenElement) {
       if (document.exitFullscreen) await document.exitFullscreen();
       else document.webkitExitFullscreen?.();
-      return;
     }
+  } catch {
+    if (!hadCinemaMode) showChatError('Não foi possível sair da tela cheia agora.');
+  } finally {
+    updateFullscreenButton();
+  }
+}
+
+async function toggleFullscreen() {
+  if (fullscreenIsActive()) {
+    await exitFullscreenView();
+    return;
+  }
+  // No celular o modo cinema ocupa toda a viewport, mas continua na página:
+  // assim o gesto pode revelar o chat sem tocar no relógio do vídeo.
+  if (shouldUseCinemaMode()) {
+    document.body.classList.add('cinema-mode');
+    updateFullscreenButton();
+    showFullscreenGestureHint();
+    return;
+  }
+  try {
     if (els.videoWrapper.requestFullscreen) {
       await els.videoWrapper.requestFullscreen();
+      showFullscreenGestureHint();
       return;
     }
-    // Safari em alguns iPhones usa apenas o fullscreen nativo do elemento de vídeo.
-    state.player?.video?.webkitEnterFullscreen?.();
   } catch {
-    showChatError('A tela cheia não está disponível neste navegador.');
+    // Alguns navegadores não liberam a API de tela cheia. O modo cinema
+    // mantém o mesmo visual e os controles de gesto funcionando.
   }
+  document.body.classList.add('cinema-mode');
+  updateFullscreenButton();
+  showFullscreenGestureHint();
 }
 
 async function togglePictureInPicture() {
@@ -920,73 +1005,55 @@ els.btnPlayPause.addEventListener('click', togglePlayback);
 els.btnSoloMode.addEventListener('click', () => setSoloMode(!state.soloMode));
 els.btnFullscreen.addEventListener('click', toggleFullscreen);
 els.btnPip.addEventListener('click', togglePictureInPicture);
+const handleFullscreenChange = () => {
+  updateFullscreenButton();
+  if (fullscreenIsActive()) showFullscreenGestureHint();
+  else hideFullscreenGestureHint();
+};
+document.addEventListener('fullscreenchange', handleFullscreenChange);
+document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
 
 function videoWrapperIsFullscreen() {
-  return document.fullscreenElement === els.videoWrapper
+  return document.body.classList.contains('cinema-mode')
+    || document.fullscreenElement === els.videoWrapper
     || document.webkitFullscreenElement === els.videoWrapper;
 }
 
-// A camada de gestos só existe (e só recebe toque) durante a tela cheia — veja
-// o CSS de .fullscreen-gesture-layer. Fora da tela cheia, ela não existe na
-// tela e não pode interferir em nenhum outro toque do app (isso já causou um
-// bug de sincronização antes, então o toque aqui NUNCA deve dar play/pause).
-const gestureLayer = document.getElementById('fullscreen-gesture-layer');
-const fullscreenHint = document.getElementById('fullscreen-hint');
-let hintHideTimer = null;
-let gestureTouch = null;
-
-function showFullscreenHint() {
-  if (!fullscreenHint) return;
-  fullscreenHint.classList.add('visible');
-  clearTimeout(hintHideTimer);
-  hintHideTimer = setTimeout(() => fullscreenHint.classList.remove('visible'), 2600);
-}
-
-function hideFullscreenHint() {
-  clearTimeout(hintHideTimer);
-  fullscreenHint?.classList.remove('visible');
-}
-
-async function exitFullscreenAndOpenChat() {
-  hideFullscreenHint();
+let fullscreenSwipe = null;
+els.videoWrapper.addEventListener('pointerdown', (event) => {
+  if (!videoWrapperIsFullscreen() || event.target.closest?.('button, input, select, textarea, a')) return;
+  fullscreenSwipe = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+  try { els.videoWrapper.setPointerCapture?.(event.pointerId); } catch { /* navegador já capturou ou recusou */ }
+  // Tocar no vídeo em tela cheia só revela a dica; não altera play/pause nem
+  // dispara uma sincronização antiga por acidente.
+  event.preventDefault();
+});
+els.videoWrapper.addEventListener('pointerup', async (event) => {
+  if (!fullscreenSwipe || fullscreenSwipe.pointerId !== event.pointerId) return;
+  const deltaX = event.clientX - fullscreenSwipe.x;
+  const deltaY = event.clientY - fullscreenSwipe.y;
+  fullscreenSwipe = null;
   try {
-    if (document.exitFullscreen) await document.exitFullscreen();
-    else document.webkitExitFullscreen?.();
-  } finally {
-    openChat();
-  }
-}
-
-if (gestureLayer) {
-  gestureLayer.addEventListener('pointerdown', (event) => {
-    gestureTouch = { id: event.pointerId, x: event.clientX, y: event.clientY };
-  });
-  gestureLayer.addEventListener('pointerup', (event) => {
-    if (!gestureTouch || gestureTouch.id !== event.pointerId) return;
-    const deltaX = event.clientX - gestureTouch.x;
-    const deltaY = event.clientY - gestureTouch.y;
-    gestureTouch = null;
-    const isSwipeLeft = deltaX <= -60 && Math.abs(deltaX) > Math.abs(deltaY);
-    if (isSwipeLeft) {
-      exitFullscreenAndOpenChat();
+    if (els.videoWrapper.hasPointerCapture?.(event.pointerId)) els.videoWrapper.releasePointerCapture?.(event.pointerId);
+  } catch { /* a captura pode ter sido liberada pelo navegador */ }
+  if (deltaX <= -48 && Math.abs(deltaX) > Math.abs(deltaY)) {
+    hideFullscreenGestureHint();
+    if (document.body.classList.contains('cinema-mode')) {
+      openChat({ focus: false });
     } else {
-      // Toque simples (sem arrastar): só mostra a dica, nunca controla o vídeo.
-      showFullscreenHint();
+      await exitFullscreenView();
+      openChat({ focus: false });
     }
-  });
-  gestureLayer.addEventListener('pointercancel', () => { gestureTouch = null; });
-}
-
-function handleFullscreenChange() {
-  updateFullscreenButton();
-  if (videoWrapperIsFullscreen()) {
-    showFullscreenHint();
-  } else {
-    hideFullscreenHint();
+  } else if (Math.abs(deltaX) < 12 && Math.abs(deltaY) < 12) {
+    showFullscreenGestureHint(2200);
   }
-}
-document.addEventListener('fullscreenchange', handleFullscreenChange);
-document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+  event.preventDefault();
+});
+els.videoWrapper.addEventListener('pointercancel', () => { fullscreenSwipe = null; });
+els.btnExitFullscreen?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  exitFullscreenView();
+});
 els.resumeBanner.addEventListener('click', () => {
   state.sync?.localPlay();
   setTimeout(updatePlayPauseIcon, 200);
@@ -1143,8 +1210,40 @@ function findChatMessageRow(messageId) {
     .find((row) => row.dataset.messageId === messageId) || null;
 }
 
+function peerHasReadMessage(readBy) {
+  return Array.isArray(readBy) && readBy.some((id) => id && id !== state.participantId);
+}
+
+function updateChatMessageReadStatus(messageId, readBy = []) {
+  if (!messageId) return;
+  if (peerHasReadMessage(readBy)) state.readMessageIds.add(messageId);
+  const row = findChatMessageRow(messageId);
+  if (!row || !row.classList.contains('mine')) return;
+  const status = row.querySelector('.chat-message-status');
+  if (!status) return;
+  const seen = state.readMessageIds.has(messageId) || peerHasReadMessage(readBy);
+  status.textContent = seen ? '✓✓ Visto' : '✓ Enviada';
+  status.classList.toggle('seen', seen);
+}
+
+function markChatMessageRead(messageId, participantId) {
+  if (!messageId || participantId === state.participantId || document.hidden || !chatIsOpenOnThisScreen()) return;
+  const row = findChatMessageRow(messageId);
+  if (!row || row.dataset.readReceiptSent === 'true') return;
+  row.dataset.readReceiptSent = 'true';
+  state.wsClient?.send({ type: 'CHAT_READ', messageId });
+}
+
+function markVisibleIncomingMessagesRead() {
+  if (document.hidden || !chatIsOpenOnThisScreen()) return;
+  els.chatMessages.querySelectorAll('.chat-row.theirs[data-message-id]').forEach((row) => {
+    markChatMessageRead(row.dataset.messageId, row.dataset.participantId);
+  });
+}
+
 function removeChatMessage(messageId) {
   if (!messageId) return;
+  state.readMessageIds.delete(messageId);
   findChatMessageRow(messageId)?.remove();
   if (!els.chatMessages.querySelector('.chat-row') && !els.chatMessages.querySelector('.chat-empty-local')) {
     showChatWelcomeState();
@@ -1164,6 +1263,7 @@ function renderChatHistory(messages) {
       media: message.media,
       avatar: message.avatar || sender?.avatar || null,
       replyTo: message.replyTo,
+      readBy: message.readBy,
     });
     if (row) visibleMessages += 1;
   }
@@ -1221,16 +1321,20 @@ function openChatMessageMenu(trigger, { messageId, mine, row, author, text }) {
   setTimeout(() => document.addEventListener('pointerdown', dismiss, true), 0);
 }
 
-function addChatMessage(author, text, mine, { id = null, participantId = null, media = null, avatar = null, replyTo = null } = {}) {
+function addChatMessage(author, text, mine, { id = null, participantId = null, media = null, avatar = null, replyTo = null, readBy = [] } = {}) {
   if (id) {
     const existing = findChatMessageRow(id);
-    if (existing) return existing;
+    if (existing) {
+      updateChatMessageReadStatus(id, readBy);
+      return existing;
+    }
     if (state.hiddenMessageIds.has(id)) return null;
   }
   removeChatEmptyStates();
   const row = document.createElement('div');
   row.className = `chat-row ${mine ? 'mine' : 'theirs'}`;
   if (id) row.dataset.messageId = id;
+  if (participantId) row.dataset.participantId = participantId;
   row.appendChild(createAvatarElement(avatar, mine ? '✿' : '❀'));
 
   const bubble = document.createElement('div');
@@ -1239,10 +1343,10 @@ function addChatMessage(author, text, mine, { id = null, participantId = null, m
   authorElement.className = 'chat-author';
   authorElement.textContent = author;
   bubble.appendChild(authorElement);
-  if (replyTo?.id) {
+  if (replyTo && (replyTo.id || replyTo.from || replyTo.text)) {
     const quote = document.createElement('div');
     quote.className = 'chat-reply-quote';
-    quote.textContent = `${replyTo.from}: ${replyTo.text || 'mídia'}`;
+    quote.textContent = `${replyTo.from || 'Mensagem'}: ${replyTo.text || 'mídia'}`;
     bubble.appendChild(quote);
   }
   if (media) {
@@ -1256,6 +1360,11 @@ function addChatMessage(author, text, mine, { id = null, participantId = null, m
     const paragraph = document.createElement('p');
     paragraph.textContent = text;
     bubble.appendChild(paragraph);
+  }
+  if (mine && id) {
+    const status = document.createElement('span');
+    status.className = 'chat-message-status';
+    bubble.appendChild(status);
   }
   row.appendChild(bubble);
   if (id) {
@@ -1272,6 +1381,7 @@ function addChatMessage(author, text, mine, { id = null, participantId = null, m
     row.appendChild(actions);
   }
   els.chatMessages.appendChild(row);
+  if (mine && id) updateChatMessageReadStatus(id, readBy);
   els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
   return row;
 }
@@ -1333,16 +1443,16 @@ els.chatForm.addEventListener('submit', (event) => {
   const replyTo = state.replyTo;
   const sent = state.wsClient?.send({ type: 'CHAT_MESSAGE', messageId, text, media, replyTo });
   if (!sent) return showChatError('A conexão caiu antes de enviar. Tente novamente.');
-  addChatMessage(state.myName, text, true, { id: messageId, participantId: state.participantId, media, avatar: state.avatar, replyTo });
   els.chatInput.value = '';
   clearPendingMedia();
   clearReplyTo();
 });
 
-function openChat() {
+function openChat({ focus = true } = {}) {
   els.chatPanel.classList.add('open');
   clearUnreadChat();
-  setTimeout(() => els.chatInput.focus(), 120);
+  markVisibleIncomingMessagesRead();
+  if (focus) setTimeout(() => els.chatInput.focus(), 120);
 }
 
 function closeChat() { els.chatPanel.classList.remove('open'); }
@@ -1477,39 +1587,51 @@ document.addEventListener('keydown', (event) => {
 (function setupChatResize() {
   const handle = document.getElementById('chat-resize-handle');
   if (!handle) return;
-  const presets = [32, 52, 84];
+  const presets = [34, 50, 68];
   let preset = 0;
-  let dragging = false;
+  let activePointerId = null;
   let moved = false;
   let startY = 0;
   let startHeight = 0;
   handle.addEventListener('pointerdown', (event) => {
-    dragging = true;
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    activePointerId = event.pointerId;
     moved = false;
     startY = event.clientY;
     startHeight = els.chatPanel.getBoundingClientRect().height;
-    handle.setPointerCapture?.(event.pointerId);
+    try { handle.setPointerCapture?.(event.pointerId); } catch { /* segue funcionando dentro do puxador */ }
+    event.preventDefault();
   });
-  addEventListener('pointermove', (event) => {
-    if (!dragging) return;
+  handle.addEventListener('pointermove', (event) => {
+    if (activePointerId !== event.pointerId) return;
     const delta = startY - event.clientY;
     if (Math.abs(delta) > 6) moved = true;
-    const vh = Math.min(92, Math.max(24, ((startHeight + delta) / innerHeight) * 100));
-    els.chatPanel.style.setProperty('--chat-height', `${vh}dvh`);
+    const viewportHeight = window.visualViewport?.height || innerHeight;
+    const height = Math.min(viewportHeight * .75, Math.max(190, startHeight + delta));
+    els.chatPanel.style.setProperty('--chat-height', `${Math.round(height)}px`);
+    event.preventDefault();
   });
-  addEventListener('pointerup', () => {
-    if (!dragging) return;
-    dragging = false;
+  const finishResize = (event) => {
+    if (activePointerId !== event.pointerId) return;
+    try {
+      if (handle.hasPointerCapture?.(event.pointerId)) handle.releasePointerCapture?.(event.pointerId);
+    } catch { /* o navegador já liberou a captura */ }
+    activePointerId = null;
     if (!moved) {
       preset = (preset + 1) % presets.length;
       els.chatPanel.style.setProperty('--chat-height', `${presets[preset]}dvh`);
     }
-  });
+  };
+  handle.addEventListener('pointerup', finishResize);
+  handle.addEventListener('pointercancel', finishResize);
 })();
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden && state.roomCode) saveRoomSession(state.roomCode, state.reconnectToken, state.participantId);
-  if (!document.hidden && chatIsOpenOnThisScreen()) clearUnreadChat();
+  if (!document.hidden && chatIsOpenOnThisScreen()) {
+    clearUnreadChat();
+    markVisibleIncomingMessagesRead();
+  }
   if (!document.hidden && state.roomCode) {
     if (state.wsClient?.isOpen()) {
       state.wsClient.send({ type: 'REQUEST_STATE' }, { skipIfBusy: true });

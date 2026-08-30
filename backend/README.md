@@ -1,9 +1,10 @@
-# Backend v14.1
+# Backend v16.1
 
 Servidor WebSocket autoritativo do “Encontro de Jasmym e Lívia”. Mantém salas
-para no máximo duas pessoas, sincroniza a linha do tempo e retransmite chat,
-fotos, GIFs e avatar. A V14.1 mantém o histórico de chat da sala em arquivo,
-sem alterar a autoridade do relógio do vídeo.
+para no máximo duas pessoas, sincroniza a linha do tempo e confirma chat,
+fotos, GIFs, respostas e avatar para as duas telas. A V16.1 mantém o histórico
+da sala em arquivo e registra quando a outra pessoa viu uma mensagem, sem
+alterar a autoridade do relógio do vídeo.
 
 ## Executar
 
@@ -39,8 +40,10 @@ avatar em cada envio.
 
 As últimas mensagens válidas da sala são salvas em `data/rooms.json`, usando
 troca atômica de arquivo. Ao entrar ou reconectar, o backend envia esse
-histórico antes de qualquer nova mensagem. “Apagar para todos” remove a
-mensagem do arquivo; “apagar para mim” fica somente no navegador.
+histórico antes de qualquer nova mensagem. Uma `CHAT_MESSAGE` confirmada chega
+para quem enviou e para quem recebeu; `CHAT_READ` atualiza o visto apenas para
+quem enviou. “Apagar para todos” remove a mensagem do arquivo; “apagar para
+mim” fica somente no navegador.
 
 O arquivo é removido do Git por `data/` no `.gitignore`. Para manter o histórico
 quando uma hospedagem troca completamente o disco da aplicação, configure um

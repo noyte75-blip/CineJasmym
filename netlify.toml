@@ -18,7 +18,7 @@
   [headers.values]
     Cache-Control = "no-store"
 
-# Os arquivos usam ?v=16. Uma nova versão cria outra URL, então o navegador
+# Os arquivos usam ?v=16.1. Uma nova versão cria outra URL, então o navegador
 # pode guardar JS/CSS por bastante tempo sem misturar protocolos.
 [[headers]]
   for = "/*.js"

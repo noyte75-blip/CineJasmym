@@ -1,4 +1,4 @@
-# Encontro de Jasmym e Lívia — versão 16
+# Encontro de Jasmym e Lívia — versão 16.1
 
 Watch Together simples para exatamente duas pessoas, com vídeo sincronizado,
 chat, fotos, GIFs e foto de perfil. O tema visual usa jasmim, lírio, tons de
@@ -55,13 +55,31 @@ rosa, lilás e verde.
 - Em tela cheia, deslizar o vídeo para a esquerda sai da tela cheia e abre o
   chat para continuar a conversa.
 
+## Correção da V16.1 — chat compartilhado de verdade
+
+- A mensagem confirmada pelo servidor agora chega para quem enviou e para quem
+  recebeu. Respostas diretas e GIFs usam exatamente o mesmo registro nas duas
+  telas, sem uma prévia local enganosa.
+- Cada mensagem enviada por você mostra `Enviada` e passa para `Visto` quando
+  a outra pessoa abre o chat ou vê a conversa.
+- O sininho do chat ganha um ponto vermelho e uma animação breve quando chega
+  uma mensagem, mesmo quando o chat já está aberto.
+- A validação aceita os links atuais do CDN do GIPHY, inclusive URLs com o
+  identificador de sessão usado pela busca oficial.
+- No celular, a tela cheia vira um modo cinema: a dica some sozinha, aparece
+  de novo ao tocar o vídeo e um gesto para a esquerda abre o chat sobre o
+  vídeo sem controlar a reprodução.
+- O puxador do chat tem uma área maior de toque, respeita a altura escolhida e
+  os campos de mensagem/GIF usam 16px para o Safari não aplicar zoom ao digitar.
+- O texto extra do fantasma foi removido do topo do chat no modo Terror.
+
 ## Correção de cache
 
-- Todos os arquivos estáticos receberam URLs `?v=16`. Assim, após o deploy,
+- Todos os arquivos estáticos receberam URLs `?v=16.1`. Assim, após o deploy,
   os aparelhos baixam a configuração atual, inclusive a busca de GIFs, sem
   depender de limpar o cache manualmente.
-- Esta versão não altera o backend nem o protocolo: ela preserva chat,
-  histórico, sincronização e o aviso sonoro já existentes.
+- Esta correção atualiza frontend e backend para que a confirmação de mensagem
+  e o visto sejam compartilhados entre os dois aparelhos.
 
 ## O que mudou na sincronização
 
@@ -121,14 +139,14 @@ render.yaml  configuração do backend
 netlify.toml configuração do frontend
 ```
 
-## Atualização da V16
+## Atualização da V16.1
 
-Esta atualização troca frontend e backend: o backend recebeu a saída explícita
-da sala, para liberar a vaga e não deixar um perfil preso à reconexão.
+Esta atualização troca frontend e backend: o backend confirma a mesma mensagem
+para os dois aparelhos e guarda o estado de visto no histórico da sala.
 
 1. Substitua as pastas `frontend/` e `backend/` no projeto.
 2. Faça o deploy do backend no Render e, depois, o deploy da Netlify.
-3. Abra o site normalmente: os scripts agora terminam em `?v=16` e não usam
+3. Abra o site normalmente: os scripts agora terminam em `?v=16.1` e não usam
    a cópia antiga guardada no navegador.
 4. Pesquise um GIF para confirmar a atualização.
 
