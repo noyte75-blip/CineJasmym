@@ -111,7 +111,10 @@ class YoutubePlayer extends PlayerInterface {
           },
           onStateChange: (event) => {
             this._playerState = event.data;
-            if (event.data === YT.PlayerState.PLAYING) this._playingIntent = true;
+            if (event.data === YT.PlayerState.PLAYING) {
+              this._playingIntent = true;
+              this._emit('play');
+            }
             if (
               event.data === YT.PlayerState.PAUSED
               || event.data === YT.PlayerState.ENDED
@@ -119,6 +122,7 @@ class YoutubePlayer extends PlayerInterface {
             ) {
               this._playingIntent = false;
             }
+            if (event.data === YT.PlayerState.ENDED) this._emit('ended');
             // BUFFERING mantém a intenção anterior. Assim o heartbeat não
             // informa "pausado" só porque o YouTube está carregando dados.
           },

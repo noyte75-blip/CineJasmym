@@ -1,4 +1,4 @@
-# Encontro de Jasmym e Lívia — versão 15
+# Encontro de Jasmym e Lívia — versão 16
 
 Watch Together simples para exatamente duas pessoas, com vídeo sincronizado,
 chat, fotos, GIFs e foto de perfil. O tema visual usa jasmim, lírio, tons de
@@ -40,9 +40,24 @@ rosa, lilás e verde.
   minuto do vídeo no YouTube.
 - Chat compacto no celular para manter o vídeo visível enquanto escreve.
 
+## Correções e novidades da V16
+
+- Reconexão recente continua por até 7 minutos: no celular ela começa sozinha
+  com botão de cancelar; no computador a pessoa escolhe se quer voltar.
+- O botão **sair** remove o vínculo salvo deste aparelho e avisa a sala, sem
+  prender a pessoa em uma reconexão automática.
+- O fim de vídeos MP4/WebM e YouTube envia uma pausa oficial para a sala, para
+  não ficar tentando repetir os últimos segundos.
+- O modo Escuro foi redesenhado em azul-marinho e o Terror em preto/vinho;
+  bolhas, menus e campos também ficam escuros, com avisos bobos de fantasma.
+- No celular, o layout usa `dvh` como correção moderna de viewport, os
+  controles têm 44px e o vídeo usa proporção 16:9 sem ser esticado.
+- Em tela cheia, deslizar o vídeo para a esquerda sai da tela cheia e abre o
+  chat para continuar a conversa.
+
 ## Correção de cache
 
-- Todos os arquivos estáticos receberam URLs `?v=15`. Assim, após o deploy,
+- Todos os arquivos estáticos receberam URLs `?v=16`. Assim, após o deploy,
   os aparelhos baixam a configuração atual, inclusive a busca de GIFs, sem
   depender de limpar o cache manualmente.
 - Esta versão não altera o backend nem o protocolo: ela preserva chat,
@@ -106,14 +121,14 @@ render.yaml  configuração do backend
 netlify.toml configuração do frontend
 ```
 
-## Atualização da V15
+## Atualização da V16
 
-Para esta atualização, basta substituir a pasta `frontend/` completa no projeto
-da Netlify. O backend do Render não precisa ser alterado.
+Esta atualização troca frontend e backend: o backend recebeu a saída explícita
+da sala, para liberar a vaga e não deixar um perfil preso à reconexão.
 
-1. Substitua a pasta `frontend/` inteira no projeto da Netlify.
-2. Espere o deploy terminar.
-3. Abra o site normalmente: os scripts agora terminam em `?v=15` e não usam
+1. Substitua as pastas `frontend/` e `backend/` no projeto.
+2. Faça o deploy do backend no Render e, depois, o deploy da Netlify.
+3. Abra o site normalmente: os scripts agora terminam em `?v=16` e não usam
    a cópia antiga guardada no navegador.
 4. Pesquise um GIF para confirmar a atualização.
 

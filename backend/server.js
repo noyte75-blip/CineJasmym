@@ -712,7 +712,7 @@ function handleRoomMessage(ws, msg) {
   }, ws);
 }
 
-function leaveRoom(ws) {
+function leaveRoom(ws, { forgetParticipant = false } = {}) {
   const room = roomFor(ws);
   const participant = room?.participants.get(ws.participantId);
   if (!room || !participant || participant.ws !== ws) return;
@@ -721,6 +721,7 @@ function leaveRoom(ws) {
   participant.activeSince = null;
   ws.roomCode = null;
   ws.participantId = null;
+  if (forgetParticipant) room.participants.delete(participant.id);
   electLeader(room);
   touch(room);
   persistRooms();
@@ -778,7 +779,7 @@ wss.on('connection', (ws) => {
     }
     if (msg.type === 'CREATE_ROOM') return handleCreateRoom(ws, msg);
     if (msg.type === 'JOIN_ROOM') return handleJoinRoom(ws, msg);
-    if (msg.type === 'LEAVE_ROOM') return leaveRoom(ws);
+    if (msg.type === 'LEAVE_ROOM') return leaveRoom(ws, { forgetParticipant: true });
     handleRoomMessage(ws, msg);
   });
   ws.on('close', () => leaveRoom(ws));

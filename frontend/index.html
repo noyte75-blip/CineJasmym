@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="preconnect" href="https://encontro-jasmym-e-livia-backend-uq81.onrender.com" crossorigin />
-  <link rel="stylesheet" href="style.css?v=15" />
+  <link rel="stylesheet" href="style.css?v=16" />
 </head>
 <body>
   <div class="garden-glow garden-glow-one" aria-hidden="true"></div>
@@ -94,6 +94,7 @@
         <button id="btn-copy-link" class="chip-btn" title="Copiar link do encontro">
           sala <strong id="room-code-display">------</strong> · copiar
         </button>
+        <button id="btn-leave-room" class="chip-btn leave-room-btn" type="button" title="Sair desta sala neste aparelho">sair</button>
         <button id="btn-toggle-chat" class="chip-btn chat-toggle-mobile">💬 abrir chat <span id="chat-unread-badge" class="chat-unread-badge hidden" aria-label="Mensagens não lidas">0</span></button>
       </div>
     </header>
@@ -216,6 +217,18 @@
     </div>
   </div>
 
+  <div id="reconnect-modal" class="reconnect-modal hidden" role="dialog" aria-modal="true" aria-labelledby="reconnect-title">
+    <div class="reconnect-card paper-card">
+      <span class="chat-kicker">sala recente</span>
+      <strong id="reconnect-title">Voltar para a sala?</strong>
+      <p id="reconnect-message">Você saiu há pouco tempo. A sala ainda pode estar rolando.</p>
+      <div class="reconnect-actions">
+        <button id="btn-skip-reconnect" class="secondary-btn reconnect-skip" type="button">Ficar fora</button>
+        <button id="btn-reconnect-now" class="primary-btn reconnect-now" type="button">Reconectar</button>
+      </div>
+    </div>
+  </div>
+
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
     <defs>
       <symbol id="svg-lily" viewBox="0 0 64 64">
@@ -237,12 +250,12 @@
     </defs>
   </svg>
 
-  <script src="config.js?v=15"></script>
-  <script src="video-players/player-interface.js?v=15"></script>
-  <script src="video-players/html5-player.js?v=15"></script>
-  <script src="video-players/youtube-player.js?v=15"></script>
-  <script src="websocket-client.js?v=15"></script>
-  <script src="sync.js?v=15"></script>
-  <script src="app.js?v=15"></script>
+  <script src="config.js?v=16"></script>
+  <script src="video-players/player-interface.js?v=16"></script>
+  <script src="video-players/html5-player.js?v=16"></script>
+  <script src="video-players/youtube-player.js?v=16"></script>
+  <script src="websocket-client.js?v=16"></script>
+  <script src="sync.js?v=16"></script>
+  <script src="app.js?v=16"></script>
 </body>
 </html>

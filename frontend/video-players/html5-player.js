@@ -9,6 +9,7 @@ class Html5Player extends PlayerInterface {
     this.video.className = 'video-element';
     this.video.controls = false; // controles são os nossos, para manter tudo sincronizado
     this.video.playsInline = true;
+    this.video.loop = false;
     this.video.preload = 'auto';
     this.container.innerHTML = '';
     this.container.appendChild(this.video);
@@ -18,6 +19,7 @@ class Html5Player extends PlayerInterface {
     this.video.addEventListener('play', () => this._emit('play'));
     this.video.addEventListener('pause', () => this._emit('pause'));
     this.video.addEventListener('seeked', () => this._emit('seek'));
+    this.video.addEventListener('ended', () => this._emit('ended'));
   }
 
   async load(url) {

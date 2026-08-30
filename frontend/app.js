@@ -20,6 +20,7 @@ const els = {
   peerStatus: document.getElementById('peer-status'),
   roomCodeDisplay: document.getElementById('room-code-display'),
   btnCopyLink: document.getElementById('btn-copy-link'),
+  btnLeaveRoom: document.getElementById('btn-leave-room'),
   btnNeutralMode: document.getElementById('btn-neutral-mode'),
   chatUnreadBadge: document.getElementById('chat-unread-badge'),
   videoWrapper: document.getElementById('video-wrapper'),
@@ -63,6 +64,10 @@ const els = {
   btnSettingsChat: document.getElementById('btn-settings-chat'),
   btnSettingsFullscreen: document.getElementById('btn-settings-fullscreen'),
   btnSettingsPip: document.getElementById('btn-settings-pip'),
+  reconnectModal: document.getElementById('reconnect-modal'),
+  reconnectMessage: document.getElementById('reconnect-message'),
+  btnReconnectNow: document.getElementById('btn-reconnect-now'),
+  btnSkipReconnect: document.getElementById('btn-skip-reconnect'),
   btnClearChatForMe: document.getElementById('btn-clear-chat-for-me'),
   btnOpenGif: document.getElementById('btn-open-gif'),
   gifPicker: document.getElementById('gif-picker'),
@@ -86,7 +91,10 @@ const state = {
   wsClient: null,
   reconnectToken: null,
   reconnectTimer: null,
+  reconnectChoiceTimer: null,
   reconnectAttempts: 0,
+  pendingRejoin: null,
+  landingBusy: false,
   closing: false,
   player: null,
   sync: null,
@@ -115,6 +123,7 @@ const PROFILE_STORAGE_KEY = 'encontro-jasmym-profile-v1';
 const UI_STORAGE_KEY = 'encontro-jasmym-ui-v15';
 const HIDDEN_CHAT_STORAGE_KEY = 'encontro-jasmym-hidden-chat-v14';
 const PROTOCOL_VERSION = 16;
+const DEFAULT_VIDEO_PLACEHOLDER_HTML = els.videoPlaceholder.innerHTML;
 
 function readJson(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key)) ?? fallback; }
@@ -286,6 +295,28 @@ function getReconnectToken(roomCode) {
   return readSessions()[roomCode]?.reconnectToken || null;
 }
 
+function clearRoomSession(roomCode) {
+  if (!roomCode) return;
+  try {
+    const sessions = readSessions();
+    delete sessions[roomCode];
+    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(sessions));
+  } catch {
+    // Se o navegador não permitir gravar agora, a saída ainda vale nesta aba.
+  }
+}
+
+function setLandingBusy(button, busy) {
+  const buttons = [els.btnCreateRoom, els.btnJoinRoom];
+  state.landingBusy = busy;
+  buttons.forEach((item) => {
+    if (!item.dataset.defaultHtml) item.dataset.defaultHtml = item.innerHTML;
+    item.disabled = busy;
+    if (busy && item === button) item.textContent = 'Conectando…';
+    if (!busy) item.innerHTML = item.dataset.defaultHtml;
+  });
+}
+
 function showLandingError(message) {
   els.landingError.textContent = message;
   els.landingError.classList.remove('hidden');
@@ -424,28 +455,36 @@ async function ensureConnected() {
 }
 
 els.btnCreateRoom.addEventListener('click', async () => {
+  if (state.landingBusy) return;
   const name = els.createName.value.trim();
   if (!name) return showLandingError('Escreva seu nome antes de criar a sala.');
   hideLandingError();
+  state.closing = false;
   state.myName = name;
+  setLandingBusy(els.btnCreateRoom, true);
   try {
     const client = await ensureConnected();
-    client.send({ type: 'CREATE_ROOM', name, avatar: state.avatar, soloMode: state.soloMode, protocolVersion: PROTOCOL_VERSION });
+    const sent = client.send({ type: 'CREATE_ROOM', name, avatar: state.avatar, soloMode: state.soloMode, protocolVersion: PROTOCOL_VERSION });
+    if (!sent) throw new Error('A conexão caiu antes de criar a sala.');
   } catch (error) {
+    setLandingBusy(null, false);
     showLandingError(error.message || 'Não foi possível conectar ao servidor.');
   }
 });
 
 els.btnJoinRoom.addEventListener('click', async () => {
+  if (state.landingBusy) return;
   const name = els.joinName.value.trim();
   const roomCode = els.joinCode.value.trim().toUpperCase();
   if (!name) return showLandingError('Escreva seu nome antes de entrar.');
   if (!roomCode) return showLandingError('Digite o código da sala.');
   hideLandingError();
+  state.closing = false;
   state.myName = name;
+  setLandingBusy(els.btnJoinRoom, true);
   try {
     const client = await ensureConnected();
-    client.send({
+    const sent = client.send({
       type: 'JOIN_ROOM',
       name,
       avatar: state.avatar,
@@ -454,7 +493,9 @@ els.btnJoinRoom.addEventListener('click', async () => {
       reconnectToken: getReconnectToken(roomCode),
       protocolVersion: PROTOCOL_VERSION,
     });
+    if (!sent) throw new Error('A conexão caiu antes de entrar na sala.');
   } catch (error) {
+    setLandingBusy(null, false);
     showLandingError(error.message || 'Não foi possível conectar ao servidor.');
   }
 });
@@ -464,6 +505,7 @@ function attachRoomListeners(client) {
 
   const entered = (message) => {
     if (!activeClient()) return;
+    setLandingBusy(null, false);
     const enteringAnotherRoom = state.roomCode !== message.roomCode;
     state.roomCode = message.roomCode;
     state.participantId = message.participantId;
@@ -546,15 +588,18 @@ function attachRoomListeners(client) {
   });
   client.on('ROOM_FULL', ({ message }) => {
     if (!activeClient()) return;
+    setLandingBusy(null, false);
     showLandingError(message || 'Essa sala já tem duas pessoas.');
   });
   client.on('ERROR', ({ message }) => {
     if (!activeClient()) return;
+    if (!state.roomCode) setLandingBusy(null, false);
     if (state.roomCode) showChatError(message || 'Algo deu errado.');
     else showLandingError(message || 'Algo deu errado.');
   });
   client.on('DISCONNECTED', () => {
     if (!activeClient() || state.closing) return;
+    if (!state.roomCode) setLandingBusy(null, false);
     setConnectionStatus('reconectando…', 'warning');
     scheduleReconnect();
   });
@@ -622,6 +667,17 @@ function updatePlayerUtilityButtons() {
   updateSoloModeButton();
 }
 
+function handlePlayerEnded(player) {
+  if (state.player !== player) return;
+  updatePlayPauseIcon();
+  if (!state.soloMode && state.sync?.expectsPlayback()) {
+    // O fim também precisa virar uma pausa oficial. Sem isso, o relógio da
+    // sala continua avançando e pode mandar o player de volta ao fim do vídeo.
+    state.sync.localPause();
+  }
+  setConnectionStatus('vídeo terminou', 'ok');
+}
+
 async function loadVideo(videoType, url, initialState, { solo = false } = {}) {
   state.pendingVideoState = initialState || state.pendingVideoState;
   if (state.loadingVideoUrl === url) return;
@@ -652,6 +708,14 @@ async function loadVideo(videoType, url, initialState, { solo = false } = {}) {
   state.currentVideoUrl = url;
   state.currentVideoType = videoType;
   state.loadingVideoUrl = null;
+  let endAlreadyReported = false;
+  player.onStateChange?.(({ type }) => {
+    if (type === 'play') endAlreadyReported = false;
+    if (type === 'ended' && !endAlreadyReported) {
+      endAlreadyReported = true;
+      handlePlayerEnded(player);
+    }
+  });
   updatePlayerUtilityButtons();
 
   if (solo) {
@@ -794,7 +858,7 @@ function setSoloMode(active) {
 
 function updateFullscreenButton() {
   const fullscreen = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
-  els.btnFullscreen.textContent = fullscreen ? '⛶' : '⛶';
+  els.btnFullscreen.textContent = fullscreen ? '⤢' : '⛶';
   els.btnFullscreen.title = fullscreen ? 'Sair da tela cheia' : 'Tela cheia';
   els.btnFullscreen.setAttribute('aria-label', els.btnFullscreen.title);
 }
@@ -858,6 +922,31 @@ els.btnFullscreen.addEventListener('click', toggleFullscreen);
 els.btnPip.addEventListener('click', togglePictureInPicture);
 document.addEventListener('fullscreenchange', updateFullscreenButton);
 document.addEventListener('webkitfullscreenchange', updateFullscreenButton);
+
+function videoWrapperIsFullscreen() {
+  return document.fullscreenElement === els.videoWrapper
+    || document.webkitFullscreenElement === els.videoWrapper;
+}
+
+let fullscreenSwipe = null;
+els.videoWrapper.addEventListener('pointerdown', (event) => {
+  if (!videoWrapperIsFullscreen()) return;
+  fullscreenSwipe = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+});
+els.videoWrapper.addEventListener('pointerup', async (event) => {
+  if (!fullscreenSwipe || fullscreenSwipe.pointerId !== event.pointerId) return;
+  const deltaX = event.clientX - fullscreenSwipe.x;
+  const deltaY = event.clientY - fullscreenSwipe.y;
+  fullscreenSwipe = null;
+  if (deltaX > -64 || Math.abs(deltaX) < Math.abs(deltaY)) return;
+  try {
+    if (document.exitFullscreen) await document.exitFullscreen();
+    else document.webkitExitFullscreen?.();
+  } finally {
+    openChat();
+  }
+});
+els.videoWrapper.addEventListener('pointercancel', () => { fullscreenSwipe = null; });
 els.resumeBanner.addEventListener('click', () => {
   state.sync?.localPlay();
   setTimeout(updatePlayPauseIcon, 200);
@@ -917,6 +1006,64 @@ els.btnCopyLink.addEventListener('click', async () => {
     prompt('Copie o link da sala:', link);
   }
 });
+
+function removeRoomFromAddress() {
+  const url = new URL(location.href);
+  url.searchParams.delete('sala');
+  history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+}
+
+function leaveCurrentRoom() {
+  if (!state.roomCode) return;
+  const previousName = state.myName;
+  const client = state.wsClient;
+  const roomCode = state.roomCode;
+  state.closing = true;
+  clearTimeout(state.reconnectTimer);
+  clearTimeout(state.reconnectChoiceTimer);
+  clearTimeout(state.progressTimer);
+  clearRoomSession(roomCode);
+  client?.send({ type: 'LEAVE_ROOM' });
+  client?.disconnect();
+  state.wsClient = null;
+  state.sync?.destroy();
+  state.player?.destroy();
+  state.sync = null;
+  state.player = null;
+  state.playerLoadId += 1;
+  state.currentVideoUrl = null;
+  state.currentVideoType = null;
+  state.pendingVideoState = null;
+  state.loadingVideoUrl = null;
+  state.roomCode = null;
+  state.participantId = null;
+  state.reconnectToken = null;
+  state.participants = [];
+  state.soloMode = false;
+  state.hiddenMessageIds = new Set();
+  state.myName = '';
+  els.playerContainer.replaceChildren();
+  els.videoPlaceholder.innerHTML = DEFAULT_VIDEO_PLACEHOLDER_HTML;
+  els.videoPlaceholder.classList.remove('hidden');
+  els.resumeBanner.classList.add('hidden');
+  els.chatMessages.replaceChildren();
+  showChatWelcomeState();
+  closeChat();
+  clearPendingMedia();
+  clearReplyTo();
+  updateParticipants([]);
+  updatePlayerUtilityButtons();
+  setConnectionStatus('sincronização pronta', 'ok');
+  els.createName.value = previousName;
+  els.joinName.value = previousName;
+  els.screenRoom.classList.add('hidden');
+  els.screenLanding.classList.remove('hidden');
+  document.querySelector('.tab-btn[data-tab="create"]')?.click();
+  removeRoomFromAddress();
+  state.closing = false;
+}
+
+els.btnLeaveRoom.addEventListener('click', leaveCurrentRoom);
 
 function createAvatarElement(avatar, fallback = '✿') {
   const element = document.createElement('span');
@@ -1308,19 +1455,20 @@ document.addEventListener('keydown', (event) => {
     const delta = startY - event.clientY;
     if (Math.abs(delta) > 6) moved = true;
     const vh = Math.min(92, Math.max(24, ((startHeight + delta) / innerHeight) * 100));
-    els.chatPanel.style.setProperty('--chat-height', `${vh}vh`);
+    els.chatPanel.style.setProperty('--chat-height', `${vh}dvh`);
   });
   addEventListener('pointerup', () => {
     if (!dragging) return;
     dragging = false;
     if (!moved) {
       preset = (preset + 1) % presets.length;
-      els.chatPanel.style.setProperty('--chat-height', `${presets[preset]}vh`);
+      els.chatPanel.style.setProperty('--chat-height', `${presets[preset]}dvh`);
     }
   });
 })();
 
 document.addEventListener('visibilitychange', () => {
+  if (document.hidden && state.roomCode) saveRoomSession(state.roomCode, state.reconnectToken, state.participantId);
   if (!document.hidden && chatIsOpenOnThisScreen()) clearUnreadChat();
   if (!document.hidden && state.roomCode) {
     if (state.wsClient?.isOpen()) {
@@ -1331,19 +1479,65 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-function autoRejoinRecentRoom() {
-  if (roomFromUrl || state.roomCode) return;
+function findRecentRoomSession() {
   const now = Date.now();
   const sessions = readSessions();
-  const recent = Object.entries(sessions).find(([, value]) => value?.reconnectToken && value?.name && now - Number(value.savedAt || 0) < 7 * 60_000);
-  if (!recent) return;
-  const [roomCode, session] = recent;
+  const recent = Object.entries(sessions)
+    .filter(([, value]) => value?.reconnectToken && value?.name && now - Number(value.savedAt || 0) < 7 * 60_000)
+    .sort(([, a], [, b]) => Number(b.savedAt || 0) - Number(a.savedAt || 0));
+  if (!recent.length) return null;
+  const requestedCode = roomFromUrl?.toUpperCase();
+  if (requestedCode) return recent.find(([roomCode]) => roomCode === requestedCode) || null;
+  return recent[0];
+}
+
+function dismissReconnectChoice() {
+  clearTimeout(state.reconnectChoiceTimer);
+  state.reconnectChoiceTimer = null;
+  state.pendingRejoin = null;
+  els.reconnectModal.classList.add('hidden');
+}
+
+function joinPendingRoom() {
+  const pending = state.pendingRejoin;
+  if (!pending) return;
+  dismissReconnectChoice();
   document.querySelector('.tab-btn[data-tab="join"]')?.click();
-  els.joinName.value = session.name;
-  els.joinCode.value = roomCode;
+  els.joinName.value = pending.session.name;
+  els.joinCode.value = pending.roomCode;
   els.btnJoinRoom.click();
 }
-setTimeout(autoRejoinRecentRoom, 150);
+
+function skipPendingRoom() {
+  const pending = state.pendingRejoin;
+  if (pending) clearRoomSession(pending.roomCode);
+  if (pending?.roomCode === roomFromUrl?.toUpperCase()) removeRoomFromAddress();
+  dismissReconnectChoice();
+}
+
+function showReconnectChoice(roomCode, session) {
+  state.pendingRejoin = { roomCode, session };
+  const mobile = matchMedia('(max-width: 720px)').matches;
+  els.reconnectMessage.textContent = mobile
+    ? 'Reconectando automaticamente em um instante. Se preferir, cancele agora.'
+    : 'Você saiu há menos de 7 minutos. Escolha se quer voltar para esta sala.';
+  els.btnReconnectNow.textContent = mobile ? 'Entrar agora' : 'Reconectar';
+  els.btnSkipReconnect.textContent = mobile ? 'Cancelar' : 'Ficar fora';
+  els.reconnectModal.classList.remove('hidden');
+  if (mobile) state.reconnectChoiceTimer = setTimeout(joinPendingRoom, 1400);
+}
+
+function autoRejoinRecentRoom() {
+  if (state.roomCode || state.pendingRejoin) return;
+  const recent = findRecentRoomSession();
+  if (!recent) return;
+  const [roomCode, session] = recent;
+  showReconnectChoice(roomCode, session);
+}
+
+els.btnReconnectNow.addEventListener('click', joinPendingRoom);
+els.btnSkipReconnect.addEventListener('click', skipPendingRoom);
+setTimeout(autoRejoinRecentRoom, 180);
 
 updateFullscreenButton();
 
@@ -1351,4 +1545,8 @@ window.addEventListener('beforeunload', () => {
   state.closing = true;
   if (state.roomCode) saveRoomSession(state.roomCode, state.reconnectToken, state.participantId);
   state.sync?.destroy();
+});
+
+window.addEventListener('pagehide', () => {
+  if (state.roomCode) saveRoomSession(state.roomCode, state.reconnectToken, state.participantId);
 });
